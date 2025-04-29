@@ -1,4 +1,4 @@
-# Open source sustainability Web server for OSPEX
+# Open source sustainability Web server for OSSPREY
 
 
 This servers as the host API Web server, providing data for projects belonging to either Apache Software Foundation , or Eclipse Software Foundation. Now, it is also facilitated to support the Local mode for OSPEX (Open source sustainability project explorer), which means, it can process data for any Github repository! Apart from serving Github REST APIs, which fetch social network, technical network, commits history, emails/issues history, graduation forecast, project details, number of senders, total emails/issues, and emails/issues per sender, commits, committers and commits per committer, it also doubles up as the sole point of control where OSPEX functionality is hosted from. This means supporting POST request for Github APIs, orchestrating that different functionalities work together, (ReACTs, RUST scraper and pex-forecaster), it also fetches and stores data to different collections in MongoDB.
