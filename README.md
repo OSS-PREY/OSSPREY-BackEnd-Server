@@ -8,7 +8,7 @@ This servers as the host API Web server, providing data for projects belonging t
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/apache-mailing-list-fetcher.git](https://github.com/priyalsoni15/OSS-fetch-github-data.git
+git clone https://github.com/OSS-PREY/OSSPREY-BackEnd-Server.git](https://github.com/OSS-PREY/OSSPREY-BackEnd-Server.git)
 cd OSS-fetch-github-data
 ```
 
