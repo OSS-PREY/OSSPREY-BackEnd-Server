@@ -87,6 +87,37 @@ def login_user():
 
     return jsonify({'message': 'Login successful.'}), 200
 
+
+@main_routes.route('/api/process_repo', methods=['POST'])
+@cross_origin(origin='*')
+def process_repo():
+    """Record a repository processing request."""
+    data = request.get_json(silent=True) or {}
+    user_email = data.get('user_email')
+    github_repo = data.get('github_repo')
+    timestamp = data.get('timestamp')
+
+    if not user_email or not github_repo or not timestamp:
+        return jsonify({'error': 'user_email, github_repo, and timestamp are required.'}), 400
+
+    try:
+        timestamp_dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Invalid timestamp format.'}), 400
+
+    record = {
+        'user_email': user_email,
+        'github_repo': github_repo,
+        'timestamp': timestamp_dt
+    }
+
+    try:
+        db.user_repo_requests.insert_one(record)
+        return jsonify({'message': 'Repository request recorded.'}), 201
+    except Exception as e:
+        logger.error(f"Error saving repository request: {e}")
+        return jsonify({'error': 'Failed to record request.'}), 500
+
 # Homepage
 @main_routes.route('/')
 @cross_origin(origin='*') 

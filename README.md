@@ -133,6 +133,43 @@ curl -X POST http://127.0.0.1:5000/api/login \
 { "message": "Login successful." }
 ```
 
+### Record Repository Processing Request
+
+```bash
+POST /api/process_repo
+```
+
+**Request Body**
+
+```json
+{
+  "user_email": "user@example.com",
+  "github_repo": "https://github.com/org/repo",
+  "timestamp": "2024-06-12T15:32:00Z"
+}
+```
+
+- **Description**: Records a user's request to process a specific GitHub repository and stores it in the `user_repo_requests` collection in MongoDB.
+- **Response**: `201 Created` on success with a confirmation message. Returns `400` if required fields are missing or the timestamp is malformed.
+
+**Example**
+
+```bash
+curl -X POST http://127.0.0.1:5000/api/process_repo \
+  -H "Content-Type: application/json" \
+  -d '{
+        "user_email": "user@example.com",
+        "github_repo": "https://github.com/org/repo",
+        "timestamp": "2024-06-12T15:32:00Z"
+      }'
+```
+
+**Successful Response**
+
+```json
+{ "message": "Repository request recorded." }
+```
+
 ### Fetching GitHub Repository Data
 
 ```bash
