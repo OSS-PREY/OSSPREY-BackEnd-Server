@@ -10,6 +10,8 @@ from app.pipeline.orchestrator import run_pipeline
 from app.pipeline.run_pex import run_forecast
 from app.pipeline.rust_runner import run_rust_code
 from app.pipeline.update_pex import update_pex_generator
+from werkzeug.security import generate_password_hash, check_password_hash
+from datetime import datetime
 
 main_routes = Blueprint('main_routes', __name__)
 
@@ -38,6 +40,52 @@ def sanitize_document(doc):
                 elif isinstance(item, float) and math.isnan(item):
                     value[idx] = None
     return doc
+
+
+# ------------------------- Authentication Endpoints -------------------------
+
+
+@main_routes.route('/api/register', methods=['POST'])
+@cross_origin(origin='*')
+def register_user():
+    """Register a new user with the provided information."""
+    data = request.get_json(silent=True) or {}
+    required_fields = ['full_name', 'email', 'affiliation', 'password', 'referral']
+    if any(field not in data or not data[field] for field in required_fields):
+        return jsonify({'error': 'All fields are required.'}), 400
+
+    if db.users.find_one({'email': data['email']}):
+        return jsonify({'error': 'Email already registered.'}), 400
+
+    user_doc = {
+        'full_name': data['full_name'],
+        'email': data['email'],
+        'affiliation': data['affiliation'],
+        'password_hash': generate_password_hash(data['password']),
+        'referral': data['referral'],
+        'created_at': datetime.utcnow()
+    }
+
+    db.users.insert_one(user_doc)
+    return jsonify({'message': 'User registered successfully.'}), 201
+
+
+@main_routes.route('/api/login', methods=['POST'])
+@cross_origin(origin='*')
+def login_user():
+    """Validate user credentials."""
+    data = request.get_json(silent=True) or {}
+    email = data.get('email')
+    password = data.get('password')
+
+    if not email or not password:
+        return jsonify({'error': 'Email and password are required.'}), 400
+
+    user = db.users.find_one({'email': email})
+    if not user or not check_password_hash(user.get('password_hash', ''), password):
+        return jsonify({'error': 'Invalid email or password.'}), 401
+
+    return jsonify({'message': 'Login successful.'}), 200
 
 # Homepage
 @main_routes.route('/')

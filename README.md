@@ -58,6 +58,81 @@ http://127.0.0.1:5000/
 
 This document provides an overview of the available API endpoints and their functionality.
 
+### User Authentication
+
+#### Register a User
+
+```bash
+POST /api/register
+```
+
+**Request Body**
+
+```json
+{
+  "full_name": "Jane Doe",
+  "email": "jane@example.com",
+  "affiliation": "UC Davis",
+  "password": "strongpassword",
+  "referral": "Conference Booth"
+}
+```
+
+- **Description**: Creates a new user account. All fields are required. The password is stored securely using a hash.
+- **Response**: `201 Created` on success with a confirmation message. Returns `400` if fields are missing or the email is already registered.
+
+**Example**
+
+```bash
+curl -X POST http://127.0.0.1:5000/api/register \
+  -H "Content-Type: application/json" \
+  -d '{
+        "full_name": "Jane Doe",
+        "email": "jane@example.com",
+        "affiliation": "UC Davis",
+        "password": "strongpassword",
+        "referral": "Conference Booth"
+      }'
+```
+
+**Successful Response**
+
+```json
+{ "message": "User registered successfully." }
+```
+
+#### Validate Login
+
+```bash
+POST /api/login
+```
+
+**Request Body**
+
+```json
+{
+  "email": "jane@example.com",
+  "password": "strongpassword"
+}
+```
+
+- **Description**: Verifies user credentials.
+- **Response**: `200 OK` with a success message when the credentials are valid. Returns `401` for invalid credentials or `400` for incomplete requests.
+
+**Example**
+
+```bash
+curl -X POST http://127.0.0.1:5000/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "jane@example.com", "password": "strongpassword"}'
+```
+
+**Successful Response**
+
+```json
+{ "message": "Login successful." }
+```
+
 ### Fetching GitHub Repository Data
 
 ```bash
