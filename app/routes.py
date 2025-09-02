@@ -54,12 +54,14 @@ def register_user():
     if any(field not in data or not data[field] for field in required_fields):
         return jsonify({'error': 'All fields are required.'}), 400
 
-    if db.users.find_one({'email': data['email']}):
-        return jsonify({'error': 'Email already registered.'}), 400
+    email = data.get('email', '').strip().lower()
+    data['email'] = email
+    if db.users.find_one({'email': email}):
+        return jsonify({'error': 'User is Already Registered!'}), 400
 
     user_doc = {
         'full_name': data['full_name'],
-        'email': data['email'],
+        'email': email,
         'affiliation': data['affiliation'],
         'password_hash': generate_password_hash(data['password']),
         'referral': data['referral'],
