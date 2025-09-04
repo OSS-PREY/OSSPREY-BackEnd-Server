@@ -78,7 +78,7 @@ POST /api/register
 }
 ```
 
-- **Description**: Creates a new user account. All fields are required. The password is stored securely using a hash.
+- **Description**: Creates a new user account. All fields are required. The password is stored securely using a hash. The server records the registration time in a `registered_at` field.
 - **Response**: `201 Created` on success with a confirmation message. Returns `400` if fields are missing or the email is already registered.
 
 **Example**
