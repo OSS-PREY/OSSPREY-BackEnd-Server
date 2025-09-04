@@ -170,6 +170,62 @@ curl -X POST http://127.0.0.1:5000/api/process_repo \
 { "message": "Repository request recorded." }
 ```
 
+### List Registered Users
+
+```bash
+GET /api/users
+```
+
+- **Description**: Retrieves all registered users. The response includes each user's email and any other metadata stored in the database.
+- **Response**: `200 OK` with a list of user records.
+
+**Example**
+
+```bash
+curl http://127.0.0.1:5000/api/users
+```
+
+**Successful Response**
+
+```json
+{
+  "users": [
+    {
+      "full_name": "Jane Doe",
+      "email": "jane@example.com",
+      "affiliation": "UC Davis",
+      "referral": "Conference Booth",
+      "created_at": "2024-06-12T15:32:00"
+    }
+  ]
+}
+```
+
+### List User's Processed GitHub Repositories
+
+```bash
+GET /api/user_repositories?email=<user_email>
+```
+
+- **Description**: Returns all GitHub repositories processed through the system by the specified user.
+- **Response**: `200 OK` with a list of repository URLs. Returns `400` if the `email` query parameter is missing.
+
+**Example**
+
+```bash
+curl "http://127.0.0.1:5000/api/user_repositories?email=user@example.com"
+```
+
+**Successful Response**
+
+```json
+{
+  "repositories": [
+    "https://github.com/org/repo"
+  ]
+}
+```
+
 ### Fetching GitHub Repository Data
 
 ```bash

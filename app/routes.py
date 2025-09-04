@@ -120,6 +120,41 @@ def process_repo():
         logger.error(f"Error saving repository request: {e}")
         return jsonify({'error': 'Failed to record request.'}), 500
 
+# --------------------- User Data Retrieval Endpoints ---------------------
+
+
+@main_routes.route('/api/users', methods=['GET'])
+@cross_origin(origin='*')
+def get_all_users():
+    """Fetch all registered users with their metadata."""
+    try:
+        users = list(db.users.find({}, {'_id': 0, 'password_hash': 0}))
+        users = [sanitize_document(user) for user in users]
+        return jsonify({'users': users}), 200
+    except Exception as e:
+        logger.error(f"Error fetching users from MongoDB: {e}")
+        return jsonify({'error': 'Failed to fetch users.'}), 500
+
+
+@main_routes.route('/api/user_repositories', methods=['GET'])
+@cross_origin(origin='*')
+def get_user_repositories():
+    """Fetch all GitHub repositories processed by a given user."""
+    email = request.args.get('email')
+    if not email:
+        return jsonify({'error': 'email query parameter is required.'}), 400
+
+    try:
+        records = list(db.user_repo_requests.find({'user_email': email}, {
+            '_id': 0,
+            'github_repo': 1
+        }))
+        repos = sorted({rec['github_repo'] for rec in records})
+        return jsonify({'repositories': repos}), 200
+    except Exception as e:
+        logger.error(f"Error fetching repositories for user {email}: {e}")
+        return jsonify({'error': 'Failed to fetch repositories.'}), 500
+
 # Homepage
 @main_routes.route('/')
 @cross_origin(origin='*') 
