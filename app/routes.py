@@ -65,7 +65,7 @@ def register_user():
         'affiliation': data['affiliation'],
         'password_hash': generate_password_hash(data['password']),
         'referral': data['referral'],
-        'created_at': datetime.utcnow()
+        'registered_at': datetime.utcnow()
     }
 
     db.users.insert_one(user_doc)
