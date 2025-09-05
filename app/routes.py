@@ -155,9 +155,39 @@ def get_user_repositories():
         logger.error(f"Error fetching repositories for user {email}: {e}")
         return jsonify({'error': 'Failed to fetch repositories.'}), 500
 
+# ------------------------- View Tracking Endpoints -------------------------
+
+
+@main_routes.route('/api/record_view', methods=['POST'])
+@cross_origin(origin='*')
+def record_view():
+    """Record a view by storing the current timestamp."""
+    timestamp = datetime.utcnow()
+    try:
+        db.view_timestamps.insert_one({'timestamp': timestamp})
+        return jsonify({
+            'message': 'View recorded.',
+            'timestamp': timestamp.isoformat() + 'Z'
+        }), 201
+    except Exception as e:
+        logger.error(f"Error recording view: {e}")
+        return jsonify({'error': 'Failed to record view.'}), 500
+
+
+@main_routes.route('/api/view_count', methods=['GET'])
+@cross_origin(origin='*')
+def get_view_count():
+    """Return the total number of recorded view timestamps."""
+    try:
+        count = db.view_timestamps.count_documents({})
+        return jsonify({'count': count}), 200
+    except Exception as e:
+        logger.error(f"Error retrieving view count: {e}")
+        return jsonify({'error': 'Failed to retrieve view count.'}), 500
+
 # Homepage
 @main_routes.route('/')
-@cross_origin(origin='*') 
+@cross_origin(origin='*')
 def landing_page():
     return "Welcome to the Repository Fetcher for Apache and Eclipse foundations!"
 

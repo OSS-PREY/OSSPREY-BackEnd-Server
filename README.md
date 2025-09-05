@@ -294,6 +294,33 @@ GET /api/monthly_ranges
 - **Description**: Fetches the monthly range for all available Apache projects.
 
 
+### View Tracking
+
+#### Record a View
+
+```bash
+POST /api/record_view
+```
+- **Description**: Records the current timestamp each time the endpoint is called and stores it in MongoDB.
+- **Example**:
+
+```bash
+curl -X POST http://127.0.0.1:5000/api/record_view
+```
+
+#### Get View Count
+
+```bash
+GET /api/view_count
+```
+- **Description**: Returns the total number of recorded view timestamps.
+- **Example**:
+
+```bash
+curl http://127.0.0.1:5000/api/view_count
+```
+
+
 ### Notes
 - Replace `<project_id>` with the unique identifier for the project.
 - Replace `int:month` with the specific month you want to query.
