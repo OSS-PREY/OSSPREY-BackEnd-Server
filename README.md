@@ -133,6 +133,68 @@ curl -X POST http://127.0.0.1:5000/api/login \
 { "message": "Login successful." }
 ```
 
+#### Track User Login
+
+```bash
+POST /api/track_login
+```
+
+**Request Body**
+
+```json
+{
+  "user_email": "jane@example.com"
+}
+```
+
+- **Description**: Records when a user logs in by storing their email and the current server timestamp in the `login_tracking` collection.
+- **Response**: `201 Created` on success with a confirmation message. Returns `400` if `user_email` is missing.
+
+**Example**
+
+```bash
+curl -X POST http://127.0.0.1:5000/api/track_login \
+  -H "Content-Type: application/json" \
+  -d '{"user_email": "jane@example.com"}'
+```
+
+**Successful Response**
+
+```json
+{ "message": "Login tracked." }
+```
+
+#### Track User Logout
+
+```bash
+POST /api/track_logout
+```
+
+**Request Body**
+
+```json
+{
+  "user_email": "jane@example.com"
+}
+```
+
+- **Description**: Records when a user logs out by storing their email and the current server timestamp in the `logout_tracking` collection.
+- **Response**: `201 Created` on success with a confirmation message. Returns `400` if `user_email` is missing.
+
+**Example**
+
+```bash
+curl -X POST http://127.0.0.1:5000/api/track_logout \
+  -H "Content-Type: application/json" \
+  -d '{"user_email": "jane@example.com"}'
+```
+
+**Successful Response**
+
+```json
+{ "message": "Logout tracked." }
+```
+
 ### Record Repository Processing Request
 
 ```bash
