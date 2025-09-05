@@ -90,6 +90,50 @@ def login_user():
     return jsonify({'message': 'Login successful.'}), 200
 
 
+@main_routes.route('/api/track_login', methods=['POST'])
+@cross_origin(origin='*')
+def track_login():
+    """Record a user's login event."""
+    data = request.get_json(silent=True) or {}
+    user_email = data.get('user_email')
+    if not user_email:
+        return jsonify({'error': 'user_email is required.'}), 400
+
+    record = {
+        'user_email': user_email,
+        'timestamp': datetime.utcnow()
+    }
+
+    try:
+        db.login_tracking.insert_one(record)
+        return jsonify({'message': 'Login tracked.'}), 201
+    except Exception as e:
+        logger.error(f"Error recording login for {user_email}: {e}")
+        return jsonify({'error': 'Failed to track login.'}), 500
+
+
+@main_routes.route('/api/track_logout', methods=['POST'])
+@cross_origin(origin='*')
+def track_logout():
+    """Record a user's logout event."""
+    data = request.get_json(silent=True) or {}
+    user_email = data.get('user_email')
+    if not user_email:
+        return jsonify({'error': 'user_email is required.'}), 400
+
+    record = {
+        'user_email': user_email,
+        'timestamp': datetime.utcnow()
+    }
+
+    try:
+        db.logout_tracking.insert_one(record)
+        return jsonify({'message': 'Logout tracked.'}), 201
+    except Exception as e:
+        logger.error(f"Error recording logout for {user_email}: {e}")
+        return jsonify({'error': 'Failed to track logout.'}), 500
+
+
 @main_routes.route('/api/process_repo', methods=['POST'])
 @cross_origin(origin='*')
 def process_repo():
