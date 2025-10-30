@@ -36,6 +36,24 @@ Install the required Python packages using pip:
 pip install -r requirements.txt
 ```
 
+### Prerequisites for Chatbot Feature
+
+Before running the backend, make sure you have Ollama installed and the Llama 3.2 1B model downloaded:
+
+#### Install Ollama
+Visit [https://ollama.ai](https://ollama.ai) and follow the installation instructions for your operating system.
+
+#### Pull the Llama 3.2 1B Model
+```bash
+ollama pull llama3.2:1b
+```
+
+#### Start Ollama Service
+Ollama typically runs as a background service on port 11434. Verify it's running:
+```bash
+curl http://localhost:11434/api/version
+```
+
 ### Usage
 Running the Flask Application
 
@@ -45,6 +63,16 @@ Start the Flask application using the following command:
 flask run
 ```
 By default, the application will run on http://localhost:5000/.
+
+#### Testing the Chat Endpoint
+
+A test script is provided to verify the chat functionality:
+
+```bash
+python test_chat.py
+```
+
+This will test both the health check endpoint and the chat endpoint with sample queries.
 
 ### Defined end-points
 Access the following endpoint in your web browser or use a tool like curl:
@@ -382,6 +410,89 @@ GET /api/view_count
 curl http://127.0.0.1:5000/api/view_count
 ```
 
+### Chatbot Endpoints
+
+#### Health Check
+
+```bash
+GET /api/health
+```
+
+- **Description**: Simple health check endpoint to verify the API is running.
+- **Response**: `200 OK` with status message.
+
+**Example**
+
+```bash
+curl http://127.0.0.1:5000/api/health
+```
+
+**Successful Response**
+
+```json
+{ "status": "ok" }
+```
+
+#### Chat with LLM
+
+```bash
+POST /api/chat
+```
+
+**Request Body**
+
+```json
+{
+  "message": "What is CI/CD?",
+  "repoName": "apache/airflow"
+}
+```
+
+- **Description**: Processes user messages using Llama 3.2 1B model via Ollama. The `repoName` field is optional and provides context to the LLM about which repository the user is working on.
+- **Response**: `200 OK` with the LLM's response. Returns `400` if message is missing, `500` if Ollama is unavailable or times out.
+
+**Example**
+
+```bash
+curl -X POST http://127.0.0.1:5000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+        "message": "How can I improve code quality?",
+        "repoName": "apache/airflow"
+      }'
+```
+
+**Successful Response**
+
+```json
+{
+  "response": "To improve code quality, consider implementing...",
+  "timestamp": "2024-10-03T13:22:00.000000"
+}
+```
+
+**Error Responses**
+
+- **Model Unavailable** (500):
+```json
+{
+  "error": "Model unavailable. Please ensure Ollama is running."
+}
+```
+
+- **Missing Message** (400):
+```json
+{
+  "error": "Message is required."
+}
+```
+
+- **Request Timeout** (500):
+```json
+{
+  "error": "Request timed out. Please try again."
+}
+```
 
 ### Notes
 - Replace `<project_id>` with the unique identifier for the project.

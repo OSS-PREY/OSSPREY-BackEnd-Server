@@ -12,6 +12,8 @@ from app.pipeline.rust_runner import run_rust_code
 from app.pipeline.update_pex import update_pex_generator
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
+import requests
+import json
 
 main_routes = Blueprint('main_routes', __name__)
 
@@ -228,6 +230,84 @@ def get_view_count():
     except Exception as e:
         logger.error(f"Error retrieving view count: {e}")
         return jsonify({'error': 'Failed to retrieve view count.'}), 500
+
+# ------------------------- Chatbot LLM Endpoints -------------------------
+
+@main_routes.route('/api/health', methods=['GET'])
+@cross_origin(origin='*')
+def health_check():
+    """
+    Health check endpoint to verify the API is running.
+    """
+    return jsonify({'status': 'ok'}), 200
+
+
+@main_routes.route('/api/chat', methods=['POST'])
+@cross_origin(origin='*')
+def chat_with_llm():
+    """
+    Chat endpoint that processes user messages using Llama 3.2 1B via Ollama.
+    Accepts a message and optional repoName for context.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        user_message = data.get('message', '').strip()
+        repo_name = data.get('repoName', '').strip()
+
+        if not user_message:
+            return jsonify({'error': 'Message is required.'}), 400
+
+        # Prepare the prompt with context if repo name is provided
+        if repo_name:
+            prompt = f"Context: User is working on GitHub repository '{repo_name}'.\n\nUser question: {user_message}\n\nAssistant:"
+        else:
+            prompt = user_message
+
+        # Call Ollama API
+        ollama_url = "http://localhost:11434/api/generate"
+        payload = {
+            "model": "llama3.2:1b",
+            "prompt": prompt,
+            "stream": False
+        }
+
+        logger.info(f"Sending request to Ollama for message: {user_message[:50]}...")
+
+        try:
+            response = requests.post(
+                ollama_url,
+                json=payload,
+                timeout=30
+            )
+            response.raise_for_status()
+
+            result = response.json()
+            llm_response = result.get('response', '').strip()
+
+            if not llm_response:
+                logger.warning("Ollama returned empty response")
+                return jsonify({'error': 'Model returned empty response.'}), 500
+
+            logger.info(f"Successfully received response from Ollama")
+
+            return jsonify({
+                'response': llm_response,
+                'timestamp': datetime.utcnow().isoformat()
+            }), 200
+
+        except requests.exceptions.ConnectionError:
+            logger.error("Cannot connect to Ollama service")
+            return jsonify({'error': 'Model unavailable. Please ensure Ollama is running.'}), 500
+        except requests.exceptions.Timeout:
+            logger.error("Ollama request timed out")
+            return jsonify({'error': 'Request timed out. Please try again.'}), 500
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ollama request failed: {e}")
+            return jsonify({'error': 'Model unavailable. Please try again later.'}), 500
+
+    except Exception as e:
+        logger.error(f"Error in chat endpoint: {e}")
+        return jsonify({'error': 'Failed to process message.'}), 500
 
 # Homepage
 @main_routes.route('/')
