@@ -3,6 +3,8 @@ import subprocess
 import os
 import logging
 from dotenv import load_dotenv
+import pandas as pd
+import json
 
 load_dotenv()
 
@@ -108,7 +110,7 @@ def run_rust_code(git_link):
             os.path.join("target", "debug", "miner"),
             "--commit-devs-files",
             "--time-window=30",
-            "--threads=2",
+            "--threads=16",
             "--output-folder=output",
             f"--git-online-url={git_link}"
         ]
@@ -122,12 +124,25 @@ def run_rust_code(git_link):
         )
         logging.info("Command 2 output: " + cmd2_result.stdout)
         logging.info("Final output directory: " + os.path.abspath(output_folder))
-        
-        return {
-            # "fetch_github_issues": cmd1_result.stdout,
-            # "commit_devs_files": cmd2_result.stdout,
-            "output_dir": os.path.abspath(output_folder)
+
+        git_project_cropped_name = "/mnt/data1/OSPEX/root-linode/OSS-scraper/output/"+ git_link.rstrip('/').split('/')[-1].replace('.git','')
+
+        git_project_commit_file_name = git_project_cropped_name+ "-commit-file-dev.csv"
+        git_project_issue_file_name = git_project_cropped_name + "_issues.csv"
+        print(git_link, git_project_cropped_name, git_project_commit_file_name, git_project_issue_file_name)
+
+        data = {
+        "commits": pd.read_csv(git_project_commit_file_name).to_dict("records"),
+        "issues": pd.read_csv(git_project_issue_file_name).to_dict("records")
         }
+
+        return json.dumps(data, indent=2)
+
+        # return {
+        #     # "fetch_github_issues": cmd1_result.stdout,
+        #     # "commit_devs_files": cmd2_result.stdout,
+        #     "output_dir": os.path.abspath(output_folder)
+        # }
     except subprocess.CalledProcessError as e:
         logging.error("Rust tool execution failed: " + str(e))
         return {"error": "Rust tool execution failed: " + str(e)}
