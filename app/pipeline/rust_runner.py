@@ -44,7 +44,7 @@ def ensure_oss_scraper_repo():
     
     return os.path.abspath(OSS_SCRAPER_DIR)
 
-def run_rust_code(git_link):
+def run_rust_code(git_link, function_purpose = 1): #Purpose = 1; it is being run for OSSPREY, otherwise its for other tool
     """
     Given a .git URL, this function:
       1. Ensures the OSS‑Scraper repository is cloned/updated.
@@ -131,18 +131,20 @@ def run_rust_code(git_link):
         git_project_issue_file_name = git_project_cropped_name + "_issues.csv"
         print(git_link, git_project_cropped_name, git_project_commit_file_name, git_project_issue_file_name)
 
-        data = {
-        "commits": pd.read_csv(git_project_commit_file_name).to_dict("records"),
-        "issues": pd.read_csv(git_project_issue_file_name).to_dict("records")
-        }
-
-        return json.dumps(data, indent=2)
-
-        # return {
-        #     # "fetch_github_issues": cmd1_result.stdout,
-        #     # "commit_devs_files": cmd2_result.stdout,
-        #     "output_dir": os.path.abspath(output_folder)
+        # data = {
+        # "commits": pd.read_csv(git_project_commit_file_name).to_dict("records"),
+        # "issues": pd.read_csv(git_project_issue_file_name).to_dict("records")
         # }
+
+        # return json.dumps(data, indent=2)
+        if function_purpose:
+            return {"output_dir": os.path.abspath(output_folder)}
+        else:
+            return {
+            "fetch_github_issues": pd.read_csv(git_project_issue_file_name).to_dict("records"),
+            "commit_devs_files": pd.read_csv(git_project_commit_file_name).to_dict("records"),
+            }
+
     except subprocess.CalledProcessError as e:
         logging.error("Rust tool execution failed: " + str(e))
         return {"error": "Rust tool execution failed: " + str(e)}
