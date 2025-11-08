@@ -1034,6 +1034,26 @@ def get_eclipse_predictions_api(project_id, month):
         logger.error(f"Error fetching predictions for project '{project_id}', month '{month}': {e}")
         return jsonify({'error': 'Internal server error.'}), 500
 
+
+## Scrape repository independently
+@main_routes.route('/api/scrape_repository', methods=['POST'])
+@cross_origin(origin='*')
+def scrape_repository():
+    """Trigger the Rust scraper for a GitHub repository and persist the results."""
+    data = request.get_json(silent=True) or {}
+    github_link = data.get('github_link') or data.get('github_repo')
+
+    if not github_link:
+        return jsonify({'error': 'github_link is required.'}), 400
+
+    result = run_rust_code(github_link, 0) # 0 means the purpose of this scraping is not related to OSSPREY
+
+    status_code = 200
+    if not isinstance(result, dict) or result.get('error'):
+        status_code = 500
+
+    return jsonify(result), status_code
+    
 # [LOCAL GIT]
 @main_routes.route('/api/upload_git_link', methods=['POST'])
 @cross_origin(origin='*')
