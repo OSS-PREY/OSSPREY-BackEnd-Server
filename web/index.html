@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OSSPREY User Registry</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="page-header">
+    <h1>OSSPREY User Registry</h1>
+    <p class="tagline">Monitor registered users backed by the OSSPREY API</p>
+  </header>
+
+  <main>
+    <section class="controls">
+      <form id="api-config-form">
+        <label for="api-base" class="visually-hidden">API base URL</label>
+        <input
+          id="api-base"
+          name="api-base"
+          type="url"
+          placeholder="https://example.com"
+          aria-describedby="api-base-help"
+        />
+        <span id="api-base-help" class="help-text"
+          >Leave empty to use the current origin.</span
+        >
+        <button type="submit">Connect</button>
+      </form>
+      <button id="refresh-button" class="refresh" type="button">Refresh</button>
+    </section>
+
+    <section class="status" aria-live="polite">
+      <div id="status-message">Loading registered users…</div>
+    </section>
+
+    <section>
+      <div class="table-wrapper">
+        <table id="users-table" class="users-table">
+          <caption class="visually-hidden">Registered users</caption>
+          <thead>
+            <tr>
+              <th scope="col">Full Name</th>
+              <th scope="col">Email</th>
+              <th scope="col">Affiliation</th>
+              <th scope="col">Referral</th>
+              <th scope="col">Registered At</th>
+            </tr>
+          </thead>
+          <tbody id="users-table-body">
+            <tr>
+              <td colspan="5" class="placeholder">No users loaded yet.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="page-footer">
+    <small>
+      Data served from the
+      <code>GET /api/users</code>
+      endpoint documented in the backend README.
+    </small>
+  </footer>
+
+  <template id="user-row-template">
+    <tr>
+      <td data-field="full_name"></td>
+      <td data-field="email"></td>
+      <td data-field="affiliation"></td>
+      <td data-field="referral"></td>
+      <td data-field="created_at"></td>
+    </tr>
+  </template>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
