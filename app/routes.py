@@ -1,5 +1,3 @@
-# src/routes.py
-
 import math
 from flask import Blueprint, jsonify, redirect, request, url_for
 from flask_cors import cross_origin
@@ -12,6 +10,7 @@ from app.pipeline.rust_runner import run_rust_code
 from app.pipeline.update_pex import update_pex_generator
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
+from flask_jwt_extended import create_access_token # <-- ADD THIS IMPORT
 
 main_routes = Blueprint('main_routes', __name__)
 
@@ -52,12 +51,14 @@ def register_user():
     data = request.get_json(silent=True) or {}
     required_fields = ['full_name', 'email', 'affiliation', 'password', 'referral']
     if any(field not in data or not data[field] for field in required_fields):
-        return jsonify({'error': 'All fields are required.'}), 400
+        # Use 'message' key for errors
+        return jsonify({'message': 'All fields are required.'}), 400
 
     email = data.get('email', '').strip().lower()
     data['email'] = email
     if db.users.find_one({'email': email}):
-        return jsonify({'error': 'User is Already Registered!'}), 400
+        # Use 'message' key for errors
+        return jsonify({'message': 'User is Already Registered!'}), 400
 
     user_doc = {
         'full_name': data['full_name'],
@@ -81,13 +82,29 @@ def login_user():
     password = data.get('password')
 
     if not email or not password:
-        return jsonify({'error': 'Email and password are required.'}), 400
+        # Use 'message' key for errors
+        return jsonify({'message': 'Email and password are required.'}), 400
 
     user = db.users.find_one({'email': email})
     if not user or not check_password_hash(user.get('password_hash', ''), password):
-        return jsonify({'error': 'Invalid email or password.'}), 401
+        # Use 'message' key for errors
+        return jsonify({'message': 'Invalid email or password.'}), 401
 
-    return jsonify({'message': 'Login successful.'}), 200
+    # --- MODIFIED RESPONSE ---
+    # Create an access token for the user
+    access_token = create_access_token(identity=user['email'])
+    
+    # Prepare user data to return, matching the frontend's expectation
+    user_data = {
+        "email": user['email'],
+        "name": user.get('full_name', user['email']) # Use full_name, fallback to email
+    }
+
+    # Return token and user data
+    return jsonify(
+        access_token=access_token,
+        user=user_data
+    ), 200
 
 
 @main_routes.route('/api/track_login', methods=['POST'])
@@ -97,7 +114,8 @@ def track_login():
     data = request.get_json(silent=True) or {}
     user_email = data.get('user_email')
     if not user_email:
-        return jsonify({'error': 'user_email is required.'}), 400
+        # Use 'message' key for errors
+        return jsonify({'message': 'user_email is required.'}), 400
 
     record = {
         'user_email': user_email,
@@ -109,7 +127,8 @@ def track_login():
         return jsonify({'message': 'Login tracked.'}), 201
     except Exception as e:
         logger.error(f"Error recording login for {user_email}: {e}")
-        return jsonify({'error': 'Failed to track login.'}), 500
+        # Use 'message' key for errors
+        return jsonify({'message': 'Failed to track login.'}), 500
 
 
 @main_routes.route('/api/track_logout', methods=['POST'])
@@ -119,7 +138,8 @@ def track_logout():
     data = request.get_json(silent=True) or {}
     user_email = data.get('user_email')
     if not user_email:
-        return jsonify({'error': 'user_email is required.'}), 400
+        # Use 'message' key for errors
+        return jsonify({'message': 'user_email is required.'}), 400
 
     record = {
         'user_email': user_email,
@@ -131,7 +151,8 @@ def track_logout():
         return jsonify({'message': 'Logout tracked.'}), 201
     except Exception as e:
         logger.error(f"Error recording logout for {user_email}: {e}")
-        return jsonify({'error': 'Failed to track logout.'}), 500
+        # Use 'message' key for errors
+        return jsonify({'message': 'Failed to track logout.'}), 500
 
 
 @main_routes.route('/api/process_repo', methods=['POST'])
@@ -144,12 +165,14 @@ def process_repo():
     timestamp = data.get('timestamp')
 
     if not user_email or not github_repo or not timestamp:
-        return jsonify({'error': 'user_email, github_repo, and timestamp are required.'}), 400
+        # Use 'message' key for errors
+        return jsonify({'message': 'user_email, github_repo, and timestamp are required.'}), 400
 
     try:
         timestamp_dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
     except (TypeError, ValueError):
-        return jsonify({'error': 'Invalid timestamp format.'}), 400
+        # Use 'message' key for errors
+        return jsonify({'message': 'Invalid timestamp format.'}), 400
 
     record = {
         'user_email': user_email,
@@ -162,10 +185,13 @@ def process_repo():
         return jsonify({'message': 'Repository request recorded.'}), 201
     except Exception as e:
         logger.error(f"Error saving repository request: {e}")
-        return jsonify({'error': 'Failed to record request.'}), 500
+        # Use 'message' key for errors
+        return jsonify({'message': 'Failed to record request.'}), 500
 
 # --------------------- User Data Retrieval Endpoints ---------------------
 
+# (The rest of your routes.py file remains unchanged)
+# ... all your other routes ...
 
 @main_routes.route('/api/users', methods=['GET'])
 @cross_origin(origin='*')
@@ -332,6 +358,7 @@ def get_all_monthly_ranges():
         return jsonify({'project_ranges': projects}), 200
     except Exception as e:
         logger.error(f"Error fetching project_ranges from MongoDB: {e}")
+        return jsonify({'error': 'Failed to fetch project ranges.'}), 500
 
 
 # ------------------ New API Endpoint: Tech Net Data ------------------
