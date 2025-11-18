@@ -126,6 +126,11 @@ main {
   border-radius: 0.5rem;
 }
 
+.view-count {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
 .table-wrapper {
   overflow-x: auto;
   background: rgba(255, 255, 255, 0.8);

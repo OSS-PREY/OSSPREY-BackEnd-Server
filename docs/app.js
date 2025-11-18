@@ -1,15 +1,22 @@
 const API_BASE = 'https://ossprey.ngrok.app';
 const DEFAULT_ENDPOINT = '/api/users';
+const VIEW_COUNT_ENDPOINT = '/api/view_count';
 
 const statusMessage = document.getElementById('status-message');
 const tableBody = document.getElementById('users-table-body');
 const refreshButton = document.getElementById('refresh-button');
 const rowTemplate = document.getElementById('user-row-template');
+const viewCountElement = document.getElementById('view-count');
 
 // Refresh button handler
 refreshButton.addEventListener('click', () => {
-  fetchAndRenderUsers();
+  refreshData();
 });
+
+function refreshData() {
+  fetchAndRenderUsers();
+  fetchAndRenderViewCount();
+}
 
 // Fetch and display users
 async function fetchAndRenderUsers() {
@@ -101,5 +108,44 @@ function setLoading(isLoading) {
   refreshButton.textContent = isLoading ? 'Loading…' : 'Refresh';
 }
 
+async function fetchAndRenderViewCount() {
+  if (!viewCountElement) return;
+
+  setViewCountMessage('Fetching OSSPREY Views…');
+
+  try {
+    const response = await fetch(`${API_BASE}${VIEW_COUNT_ENDPOINT}`, {
+      headers: { 'Accept': 'application/json' },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Request failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+    const viewCount =
+      typeof data?.view_count === 'number'
+        ? data.view_count
+        : typeof data?.views === 'number'
+        ? data.views
+        : null;
+
+    if (typeof viewCount !== 'number') {
+      throw new Error('Unexpected response payload');
+    }
+
+    setViewCountMessage(`OSSPREY Views: ${viewCount.toLocaleString()}`);
+  } catch (error) {
+    console.error('Unable to fetch view count:', error);
+    setViewCountMessage('OSSPREY Views: unavailable');
+  }
+}
+
+function setViewCountMessage(message) {
+  if (viewCountElement) {
+    viewCountElement.textContent = message;
+  }
+}
+
 // Initial load
-fetchAndRenderUsers();
+refreshData();
