@@ -6,16 +6,19 @@ const tableBody = document.getElementById('users-table-body');
 const refreshButton = document.getElementById('refresh-button');
 const rowTemplate = document.getElementById('user-row-template');
 
+// Refresh button handler
 refreshButton.addEventListener('click', () => {
   fetchAndRenderUsers();
 });
 
+// Fetch and display users
 async function fetchAndRenderUsers() {
   updateStatus('Loading registered users…');
   setLoading(true);
+
   try {
     const response = await fetch(`${API_BASE}${DEFAULT_ENDPOINT}`, {
-      headers: { Accept: 'application/json' },
+      headers: { 'Accept': 'application/json' },
     });
 
     if (!response.ok) {
@@ -32,11 +35,7 @@ async function fetchAndRenderUsers() {
     }
 
     renderUsers(users);
-    updateStatus(
-      `Loaded ${users.length} registered user${
-        users.length === 1 ? '' : 's'
-      }.`
-    );
+    updateStatus(`Loaded ${users.length} registered user${users.length > 1 ? 's' : ''}.`);
   } catch (error) {
     console.error('Unable to fetch users:', error);
     renderEmptyState('Failed to load users. Please try again later.');
@@ -82,14 +81,10 @@ function setCellValue(rowFragment, field, value) {
 }
 
 function formatDate(value) {
-  if (!value) {
-    return '—';
-  }
+  if (!value) return '—';
 
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
+  if (isNaN(parsed.getTime())) return value;
 
   return `${parsed.toLocaleDateString()} ${parsed.toLocaleTimeString([], {
     hour: '2-digit',
