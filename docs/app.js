@@ -7,7 +7,7 @@ const tableBody = document.getElementById('users-table-body');
 const refreshButton = document.getElementById('refresh-button');
 const rowTemplate = document.getElementById('user-row-template');
 
-let apiBase = window.localStorage.getItem('ossprey-api-base') || '';
+let apiBase = 'https://ossprey.ngrok.app'
 if (apiBase) {
   apiBaseInput.value = apiBase;
 }
