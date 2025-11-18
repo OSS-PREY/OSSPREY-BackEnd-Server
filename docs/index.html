@@ -15,6 +15,41 @@
   <main>
     <section class="controls">
       <button id="refresh-button" class="refresh" type="button">Refresh</button>
+      <button
+        id="theme-toggle"
+        class="theme-toggle"
+        type="button"
+        aria-pressed="false"
+        aria-label="Switch to Dark Theme"
+        data-theme="light"
+      >
+        <span class="visually-hidden theme-toggle-label"
+          >Switch to Dark Theme</span
+        >
+        <svg
+          class="theme-icon theme-icon--sun"
+          viewBox="0 0 24 24"
+          role="img"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="12" r="4.5" stroke-width="1.8" />
+          <path
+            stroke-width="1.8"
+            d="M12 3v2.25m0 13.5V21m9-9h-2.25M5.25 12H3m15.01-6.01-1.59 1.59M7.58 16.42l-1.6 1.6m0-11.84 1.6 1.6m9.84 9.84-1.6-1.6"
+          />
+        </svg>
+        <svg
+          class="theme-icon theme-icon--moon"
+          viewBox="0 0 24 24"
+          role="img"
+          aria-hidden="true"
+        >
+          <path
+            stroke-width="1.8"
+            d="M21 14.5A8.5 8.5 0 0 1 9.5 3a8.48 8.48 0 0 0 0 17A8.5 8.5 0 0 0 21 14.5Z"
+          />
+        </svg>
+      </button>
     </section>
 
     <section class="status" aria-live="polite">

@@ -5,8 +5,20 @@ const VIEW_COUNT_ENDPOINT = '/api/view_count';
 const statusMessage = document.getElementById('status-message');
 const tableBody = document.getElementById('users-table-body');
 const refreshButton = document.getElementById('refresh-button');
+const themeToggleButton = document.getElementById('theme-toggle');
 const rowTemplate = document.getElementById('user-row-template');
 const viewCountElement = document.getElementById('view-count');
+const themeToggleLabel = themeToggleButton
+  ? themeToggleButton.querySelector('.theme-toggle-label')
+  : null;
+const THEME_STORAGE_KEY = 'ossprey-docs-theme';
+const rootElement = document.documentElement;
+const colorSchemeQuery =
+  typeof window !== 'undefined' && window.matchMedia
+    ? window.matchMedia('(prefers-color-scheme: dark)')
+    : null;
+
+initializeThemeControls();
 
 // Refresh button handler
 refreshButton.addEventListener('click', () => {
@@ -146,6 +158,80 @@ async function fetchAndRenderViewCount() {
 function setViewCountMessage(message) {
   if (viewCountElement) {
     viewCountElement.textContent = message;
+  }
+}
+
+function initializeThemeControls() {
+  if (!rootElement) return;
+
+  const storedTheme = getStoredTheme();
+  let hasStoredTheme = typeof storedTheme === 'string';
+  const systemTheme = colorSchemeQuery && colorSchemeQuery.matches ? 'dark' : 'light';
+  const initialTheme = storedTheme || systemTheme || 'light';
+
+  applyTheme(initialTheme);
+
+  if (themeToggleButton) {
+    themeToggleButton.addEventListener('click', () => {
+      const nextTheme = rootElement.classList.contains('theme-dark') ? 'light' : 'dark';
+      hasStoredTheme = true;
+      storeTheme(nextTheme);
+      applyTheme(nextTheme);
+    });
+  }
+
+  if (colorSchemeQuery) {
+    const handleSchemeChange = (event) => {
+      if (hasStoredTheme) return;
+      applyTheme(event.matches ? 'dark' : 'light');
+    };
+
+    if (typeof colorSchemeQuery.addEventListener === 'function') {
+      colorSchemeQuery.addEventListener('change', handleSchemeChange);
+    } else if (typeof colorSchemeQuery.addListener === 'function') {
+      colorSchemeQuery.addListener(handleSchemeChange);
+    }
+  }
+}
+
+function applyTheme(theme) {
+  if (!rootElement) return;
+
+  const normalizedTheme = theme === 'dark' ? 'dark' : 'light';
+  rootElement.classList.remove('theme-light', 'theme-dark');
+  rootElement.classList.add(`theme-${normalizedTheme}`);
+  if (themeToggleButton) {
+    themeToggleButton.dataset.theme = normalizedTheme;
+  }
+  updateThemeToggleLabel(normalizedTheme);
+}
+
+function updateThemeToggleLabel(theme) {
+  if (!themeToggleButton) return;
+
+  const label = theme === 'dark' ? 'Switch to Light Theme' : 'Switch to Dark Theme';
+  themeToggleButton.setAttribute('aria-label', label);
+  themeToggleButton.setAttribute('aria-pressed', theme === 'dark' ? 'true' : 'false');
+  themeToggleButton.setAttribute('title', label);
+  if (themeToggleLabel) {
+    themeToggleLabel.textContent = label;
+  }
+}
+
+function getStoredTheme() {
+  try {
+    return localStorage.getItem(THEME_STORAGE_KEY);
+  } catch (error) {
+    console.warn('Unable to access theme preference:', error);
+    return null;
+  }
+}
+
+function storeTheme(theme) {
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch (error) {
+    console.warn('Unable to persist theme preference:', error);
   }
 }
 
