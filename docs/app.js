@@ -1,26 +1,10 @@
+const API_BASE = 'https://ossprey.ngrok.app';
 const DEFAULT_ENDPOINT = '/api/users';
 
-const apiConfigForm = document.getElementById('api-config-form');
-const apiBaseInput = document.getElementById('api-base');
 const statusMessage = document.getElementById('status-message');
 const tableBody = document.getElementById('users-table-body');
 const refreshButton = document.getElementById('refresh-button');
 const rowTemplate = document.getElementById('user-row-template');
-
-let apiBase = 'https://ossprey.ngrok.app'
-if (apiBase) {
-  apiBaseInput.value = apiBase;
-}
-
-apiConfigForm.addEventListener('submit', (event) => {
-  event.preventDefault();
-  apiBase = apiBaseInput.value.trim();
-  if (apiBase.endsWith('/')) {
-    apiBase = apiBase.slice(0, -1);
-  }
-  window.localStorage.setItem('ossprey-api-base', apiBase);
-  fetchAndRenderUsers();
-});
 
 refreshButton.addEventListener('click', () => {
   fetchAndRenderUsers();
@@ -30,8 +14,8 @@ async function fetchAndRenderUsers() {
   updateStatus('Loading registered users…');
   setLoading(true);
   try {
-    const response = await fetch(`${buildBaseUrl()}${DEFAULT_ENDPOINT}`, {
-      headers: { 'Accept': 'application/json' },
+    const response = await fetch(`${API_BASE}${DEFAULT_ENDPOINT}`, {
+      headers: { Accept: 'application/json' },
     });
 
     if (!response.ok) {
@@ -48,21 +32,18 @@ async function fetchAndRenderUsers() {
     }
 
     renderUsers(users);
-    updateStatus(`Loaded ${users.length} registered user${users.length === 1 ? '' : 's'}.`);
+    updateStatus(
+      `Loaded ${users.length} registered user${
+        users.length === 1 ? '' : 's'
+      }.`
+    );
   } catch (error) {
     console.error('Unable to fetch users:', error);
-    renderEmptyState('Failed to load users. Check the API URL and try again.');
+    renderEmptyState('Failed to load users. Please try again later.');
     updateStatus(`Error: ${error.message}`);
   } finally {
     setLoading(false);
   }
-}
-
-function buildBaseUrl() {
-  if (!apiBase) {
-    return window.location.origin;
-  }
-  return apiBase;
 }
 
 function renderUsers(users) {
@@ -110,7 +91,10 @@ function formatDate(value) {
     return value;
   }
 
-  return `${parsed.toLocaleDateString()} ${parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  return `${parsed.toLocaleDateString()} ${parsed.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  })}`;
 }
 
 function updateStatus(message) {
@@ -122,4 +106,5 @@ function setLoading(isLoading) {
   refreshButton.textContent = isLoading ? 'Loading…' : 'Refresh';
 }
 
+// Initial load
 fetchAndRenderUsers();
