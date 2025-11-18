@@ -128,6 +128,8 @@ async function fetchAndRenderViewCount() {
         ? data.view_count
         : typeof data?.views === 'number'
         ? data.views
+        : typeof data?.count === 'number'
+        ? data.count
         : null;
 
     if (typeof viewCount !== 'number') {
