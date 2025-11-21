@@ -255,6 +255,43 @@ def get_view_count():
         logger.error(f"Error retrieving view count: {e}")
         return jsonify({'error': 'Failed to retrieve view count.'}), 500
 
+
+# --------------------- Processed Repository Endpoints ---------------------
+
+
+@main_routes.route('/track-processed-repo', methods=['POST'])
+@cross_origin(origin='*')
+def track_processed_repo():
+    """Record a processed repository event with timestamp and incremented count."""
+    timestamp = datetime.utcnow()
+    try:
+        current_count = db.processed_repo_events.count_documents({})
+        new_count = current_count + 1
+        db.processed_repo_events.insert_one({
+            'timestamp': timestamp,
+            'count': new_count
+        })
+        return jsonify({
+            'message': 'Processed repository recorded.',
+            'count': new_count,
+            'timestamp': timestamp.isoformat() + 'Z'
+        }), 201
+    except Exception as e:
+        logger.error(f"Error recording processed repository: {e}")
+        return jsonify({'error': 'Failed to record processed repository.'}), 500
+
+
+@main_routes.route('/processed-repo-count', methods=['GET'])
+@cross_origin(origin='*')
+def get_processed_repo_count():
+    """Return the total number of processed repository events."""
+    try:
+        count = db.processed_repo_events.count_documents({})
+        return jsonify({'count': count}), 200
+    except Exception as e:
+        logger.error(f"Error retrieving processed repository count: {e}")
+        return jsonify({'error': 'Failed to retrieve processed repository count.'}), 500
+
 # Homepage
 @main_routes.route('/')
 @cross_origin(origin='*')
