@@ -46,6 +46,15 @@ flask run
 ```
 By default, the application will run on http://localhost:5000/.
 
+#### Running with Gunicorn (auto-reload)
+For deployments that should automatically restart when source files change, use the included Gunicorn configuration:
+
+```bash
+gunicorn run:app
+```
+
+The `gunicorn.conf.py` file enables `reload`, so any code updates will trigger a server restart and keep the running app in sync with your latest changes.
+
 ### Defined end-points
 Access the following endpoint in your web browser or use a tool like curl:
 
