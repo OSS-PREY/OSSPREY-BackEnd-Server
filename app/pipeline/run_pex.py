@@ -9,17 +9,6 @@ from .update_pex import ensure_pex_generator_repo
 load_dotenv()
 
 PEX_GENERATOR_DIR = os.getenv("PEX_GENERATOR_DIR")
-if not PEX_GENERATOR_DIR:
-    raise Exception("PEX_GENERATOR_DIR environment variable is not set in your .env file.")
-if PEX_GENERATOR_DIR not in sys.path:
-    sys.path.insert(0, PEX_GENERATOR_DIR)
-
-original_cwd = os.getcwd()
-os.chdir(PEX_GENERATOR_DIR)
-try:
-    from decalfc.app.server import compute_forecast
-finally:
-    os.chdir(original_cwd)
 
 def process_tech_data(tech_csv_path):
     """Reads the technical CSV into a DataFrame."""
@@ -39,6 +28,17 @@ def process_social_data(social_csv_path):
 
 def run_forecast(tech_csv, social_csv, project, tasks, month_range):
     """Runs the forecasting pipeline and returns results."""
+    if not PEX_GENERATOR_DIR:
+        logging.warning("PEX_GENERATOR_DIR not set. Skipping forecast.")
+        return {"error": "PEX_GENERATOR_DIR not set"}
+        
+    if not os.path.isdir(PEX_GENERATOR_DIR):
+        logging.warning(f"PEX_GENERATOR_DIR is not a valid directory: {PEX_GENERATOR_DIR}")
+        return {"error": "PEX_GENERATOR_DIR invalid"}
+
+    if PEX_GENERATOR_DIR not in sys.path:
+        sys.path.insert(0, PEX_GENERATOR_DIR)
+
     try:
         tech_df = process_tech_data(tech_csv)
         social_df = process_social_data(social_csv)
@@ -54,9 +54,14 @@ def run_forecast(tech_csv, social_csv, project, tasks, month_range):
         original_dir = os.getcwd()
         os.chdir(PEX_GENERATOR_DIR)
         try:
+            from decalfc.app.server import compute_forecast
             result = compute_forecast(request_pkg)
+        except ImportError:
+            logging.error("Could not import decalfc.app.server. Check PEX_GENERATOR_DIR.")
+            return {"error": "ImportError: decalfc not found"}
         finally:
             os.chdir(original_dir)
+            
         # Convert result if it is a DataFrame.
         if isinstance(result, pd.DataFrame):
             result = result.to_dict(orient='records')
