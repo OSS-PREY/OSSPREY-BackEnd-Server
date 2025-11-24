@@ -13,10 +13,12 @@ db = mongo_client[Config.MONGODB_DB_NAME]
 
 auth_bp = Blueprint('auth_bp', __name__)
 
-GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
-
 @auth_bp.route('/api/google_login', methods=['POST'])
 def google_auth():
+    GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
+    if not GOOGLE_CLIENT_ID:
+        return jsonify({"message": "Server configuration error: GOOGLE_CLIENT_ID not set"}), 500
+
     data = request.get_json()
     
     # Check for 'credential' key from your Vue app
