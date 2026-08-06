@@ -17,9 +17,12 @@ from app.services.queue_manager import (
     STATUS_FAILED,
     STATUS_CANCELLED,
 )
+from app.services.mailer import send_email
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from flask_jwt_extended import create_access_token # <-- ADD THIS IMPORT
+import hashlib
+import secrets
 
 main_routes = Blueprint('main_routes', __name__)
 
@@ -202,6 +205,144 @@ def login_user():
         access_token=access_token,
         user=user_data
     ), 200
+
+
+# Password reset tokens are single-use and short lived.
+RESET_TOKEN_TTL = timedelta(hours=1)
+# Refuse to issue a second reset mail for the same address within this window,
+# so the endpoint cannot be used to flood someone's inbox.
+RESET_RESEND_INTERVAL = timedelta(minutes=1)
+
+# Returned for every /api/forgot_password call, whether or not the address is
+# registered: a different reply for unknown addresses would turn this endpoint
+# into an account-enumeration oracle.
+RESET_GENERIC_MESSAGE = (
+    'If an account exists for that address, a reset link is on its way.'
+)
+
+
+def _hash_reset_token(token):
+    """Store only the hash, so a leaked database cannot be used to reset passwords."""
+    return hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+
+def _password_is_acceptable(password):
+    """At least 8 characters and 3 of: lower, upper, digit, special.
+
+    Mirrors the rule the front-end shows on the register and reset pages; the
+    client check is a convenience, this one is the one that counts.
+    """
+    if not isinstance(password, str) or len(password) < 8:
+        return False
+
+    categories = (
+        any(c.islower() for c in password),
+        any(c.isupper() for c in password),
+        any(c.isdigit() for c in password),
+        any(not c.isalnum() for c in password),
+    )
+
+    return sum(categories) >= 3
+
+
+@main_routes.route('/api/forgot_password', methods=['POST'])
+@cross_origin(origin='*')
+def forgot_password():
+    """Email a password reset link to a registered address."""
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip().lower()
+
+    if not email:
+        return jsonify({'message': 'Email is required.'}), 400
+
+    user = db.users.find_one({'email': email})
+    if not user:
+        return jsonify({'message': RESET_GENERIC_MESSAGE}), 200
+
+    now = datetime.utcnow()
+
+    recent = db.password_resets.find_one({
+        'email': email,
+        'created_at': {'$gt': now - RESET_RESEND_INTERVAL},
+    })
+    if recent:
+        # Same reply as the success path, again to keep the endpoint silent
+        # about which addresses exist.
+        return jsonify({'message': RESET_GENERIC_MESSAGE}), 200
+
+    # Any outstanding link for this address stops working once a new one is
+    # issued. This also keeps expired rows from piling up per user.
+    # ponytail: cleanup is per-address on issue; add a TTL index on expires_at
+    # if the collection ever needs bounding without a reset request.
+    db.password_resets.delete_many({'email': email})
+
+    token = secrets.token_urlsafe(32)
+    db.password_resets.insert_one({
+        'email': email,
+        'token_hash': _hash_reset_token(token),
+        'created_at': now,
+        'expires_at': now + RESET_TOKEN_TTL,
+        'used_at': None,
+    })
+
+    base_url = os.environ.get('FRONTEND_BASE_URL', 'http://localhost:3000').rstrip('/')
+    reset_link = f"{base_url}/reset-password?token={token}"
+    hours = int(RESET_TOKEN_TTL.total_seconds() // 3600)
+
+    send_email(
+        email,
+        'Reset your OSSPREY password',
+        'We received a request to reset the password for your OSSPREY account.\n\n'
+        f'Open this link to choose a new password:\n{reset_link}\n\n'
+        f'The link expires in {hours} hour(s) and can only be used once.\n'
+        'If you did not request a reset you can ignore this message; '
+        'your password will not change.\n',
+    )
+
+    return jsonify({'message': RESET_GENERIC_MESSAGE}), 200
+
+
+@main_routes.route('/api/reset_password', methods=['POST'])
+@cross_origin(origin='*')
+def reset_password():
+    """Set a new password given a valid, unexpired reset token."""
+    data = request.get_json(silent=True) or {}
+    token = (data.get('token') or '').strip()
+    password = data.get('password') or ''
+
+    if not token or not password:
+        return jsonify({'message': 'Token and password are required.'}), 400
+
+    if not _password_is_acceptable(password):
+        return jsonify({
+            'message': 'Password must be at least 8 characters long and include at '
+                       'least three of the following: lower case letters, upper case '
+                       'letters, numbers, and special characters.',
+        }), 400
+
+    record = db.password_resets.find_one({'token_hash': _hash_reset_token(token)})
+    now = datetime.utcnow()
+    if not record or record.get('used_at') or record.get('expires_at', now) <= now:
+        return jsonify({'message': 'This reset link is invalid or has expired.'}), 400
+
+    result = db.users.update_one(
+        {'email': record['email']},
+        {'$set': {
+            'password_hash': generate_password_hash(password),
+            'password_reset_at': now,
+        }},
+    )
+    if not result.matched_count:
+        # Account removed between the request and the reset.
+        return jsonify({'message': 'This reset link is invalid or has expired.'}), 400
+
+    # Burn the token, and drop any other outstanding link for the account.
+    db.password_resets.update_one({'_id': record['_id']}, {'$set': {'used_at': now}})
+    db.password_resets.delete_many({'email': record['email'], 'used_at': None})
+
+    logger.info('Password reset completed for %s', record['email'])
+
+    return jsonify({'message': 'Password has been reset.'}), 200
 
 
 @main_routes.route('/api/track_login', methods=['POST'])
