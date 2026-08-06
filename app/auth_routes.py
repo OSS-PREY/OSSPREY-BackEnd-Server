@@ -58,10 +58,19 @@ def google_auth():
         # Create your own session token for the user
         access_token = create_access_token(identity=user_email)
         
-        # Send back the token and user info, just as your Vue app expects
+        # Send back the token and user info, just as your Vue app expects.
+        # Re-read the account so an existing user's saved profile comes back
+        # instead of being overwritten by whatever Google reports.
+        stored = db.users.find_one({'email': user_email}) or {}
+
         return jsonify(
             access_token=access_token,
-            user={"email": user_email, "name": user_name}
+            user={
+                "email": user_email,
+                "name": stored.get('full_name', user_name),
+                "affiliation": stored.get('affiliation', ''),
+                "role": stored.get('role', ''),
+            }
         ), 200
 
     except ValueError:

@@ -20,7 +20,7 @@ from app.services.queue_manager import (
 from app.services.mailer import send_email
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta, timezone
-from flask_jwt_extended import create_access_token # <-- ADD THIS IMPORT
+from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
 import hashlib
 import secrets
 
@@ -195,10 +195,7 @@ def login_user():
     access_token = create_access_token(identity=user['email'])
     
     # Prepare user data to return, matching the frontend's expectation
-    user_data = {
-        "email": user['email'],
-        "name": user.get('full_name', user['email']) # Use full_name, fallback to email
-    }
+    user_data = _user_profile(user)
 
     # Return token and user data
     return jsonify(
@@ -343,6 +340,73 @@ def reset_password():
     logger.info('Password reset completed for %s', record['email'])
 
     return jsonify({'message': 'Password has been reset.'}), 200
+
+
+# Longest accepted value for a free-text profile field, so a caller cannot
+# grow a user document without bound.
+PROFILE_FIELD_MAX_LENGTH = 200
+
+
+def _user_profile(user):
+    """The user shape the front-end stores in localStorage."""
+    return {
+        'email': user['email'],
+        'name': user.get('full_name', user['email']),
+        'affiliation': user.get('affiliation', ''),
+        'role': user.get('role', ''),
+    }
+
+
+@main_routes.route('/api/update_profile', methods=['POST'])
+@cross_origin(origin='*')
+@jwt_required()
+def update_profile():
+    """Update the signed-in user's own profile.
+
+    The account is taken from the access token, never from the request body:
+    the email is the primary key and is not editable here, and trusting a body
+    field would let anyone rewrite another account's profile by naming it.
+    """
+    email = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+
+    # The front-end sends the email back for readability; accept it only when
+    # it agrees with the token, so a mismatch surfaces instead of silently
+    # editing the wrong account.
+    body_email = (data.get('email') or '').strip().lower()
+    if body_email and body_email != email:
+        return jsonify({'message': 'You can only update your own profile.'}), 403
+
+    name = (data.get('name') or '').strip()
+    affiliation = (data.get('affiliation') or '').strip()
+    role = (data.get('role') or '').strip()
+
+    if not name or not affiliation:
+        return jsonify({'message': 'Name and affiliation are required.'}), 400
+
+    if any(len(v) > PROFILE_FIELD_MAX_LENGTH for v in (name, affiliation, role)):
+        return jsonify({
+            'message': f'Profile fields must be {PROFILE_FIELD_MAX_LENGTH} characters or fewer.',
+        }), 400
+
+    result = db.users.update_one(
+        {'email': email},
+        {'$set': {
+            'full_name': name,
+            'affiliation': affiliation,
+            'role': role,
+            'profile_updated_at': datetime.utcnow(),
+        }},
+    )
+    if not result.matched_count:
+        return jsonify({'message': 'User not found.'}), 404
+
+    user = db.users.find_one({'email': email})
+
+    return jsonify({
+        'message': 'Profile updated successfully.',
+        'user': _user_profile(user),
+    }), 200
 
 
 @main_routes.route('/api/track_login', methods=['POST'])
