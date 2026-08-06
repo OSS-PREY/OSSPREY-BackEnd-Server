@@ -229,6 +229,25 @@ def run_pipeline(git_link, tasks="ALL", month_range="0,-1"):
         # run, with an empty social network) instead of failing the whole job.
         if social_csvs:
             social_csv = os.path.abspath(social_csvs[0])
+            # A header-only CSV means the issues scrape returned nothing. The
+            # miner exits 0 even when GitHub rejects it (secondary rate limit),
+            # so an empty file is the only signal that the social half of the
+            # forecast is missing. Surface it instead of silently forecasting
+            # on an empty social network.
+            try:
+                with open(social_csv, "r", encoding="utf-8", errors="replace") as fh:
+                    fh.readline()               # header
+                    has_rows = bool(fh.readline().strip())
+            except OSError:
+                has_rows = False
+            if not has_rows:
+                logging.warning(
+                    "Issues CSV for '%s' contains no rows; the social network will "
+                    "be empty. This is expected for a repo with no issues, but is "
+                    "also what a rate-limited/failed GitHub scrape looks like.",
+                    project_name,
+                )
+                result_summary["social_data_empty"] = True
         else:
             social_csv = os.path.join(output_dir, repo_name + "_issues.csv")
             logging.warning(

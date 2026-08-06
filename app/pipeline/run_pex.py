@@ -1,4 +1,5 @@
 import os
+import threading
 import sys
 import pandas as pd
 import traceback
@@ -26,6 +27,9 @@ def process_social_data(social_csv_path):
     except Exception as e:
         raise Exception(f"Error reading social CSV: {e}")
 
+# Guards the process-global working directory (see run_forecast).
+_CHDIR_LOCK = threading.Lock()
+
 def run_forecast(tech_csv, social_csv, project, tasks, month_range):
     """Runs the forecasting pipeline and returns results."""
     if not PEX_GENERATOR_DIR:
@@ -51,16 +55,21 @@ def run_forecast(tech_csv, social_csv, project, tasks, month_range):
         "month_range": [int(x) for x in month_range.split(",")]
         }
         
+        # The working directory is process-global but jobs run concurrently in a
+        # thread pool, so two jobs chdir-ing at once corrupt each other's
+        # relative path resolution (missing ref/ files, cross-project outputs).
+        # Hold a process-wide lock for the whole chdir region.
         original_dir = os.getcwd()
-        os.chdir(PEX_GENERATOR_DIR)
-        try:
-            from decalfc.app.server import compute_forecast
-            result = compute_forecast(request_pkg)
-        except ImportError:
-            logging.error("Could not import decalfc.app.server. Check PEX_GENERATOR_DIR.")
-            return {"error": "ImportError: decalfc not found"}
-        finally:
-            os.chdir(original_dir)
+        with _CHDIR_LOCK:
+            os.chdir(PEX_GENERATOR_DIR)
+            try:
+                from decalfc.app.server import compute_forecast
+                result = compute_forecast(request_pkg)
+            except ImportError:
+                logging.error("Could not import decalfc.app.server. Check PEX_GENERATOR_DIR.")
+                return {"error": "ImportError: decalfc not found"}
+            finally:
+                os.chdir(original_dir)
             
         # Convert result if it is a DataFrame.
         if isinstance(result, pd.DataFrame):
