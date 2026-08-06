@@ -50,10 +50,12 @@ By default, the application will run on http://localhost:5000/.
 For deployments that should automatically restart when source files change, use the included Gunicorn configuration:
 
 ```bash
-gunicorn run:app
+gunicorn -c gunicorn.conf.py run:app
 ```
 
-The `gunicorn.conf.py` file enables `reload`, so any code updates will trigger a server restart and keep the running app in sync with your latest changes.
+The `gunicorn.conf.py` file enables `reload`, so any code updates will trigger a server restart and keep the running app in sync with your latest changes. Override the bind address with the `GUNICORN_BIND` environment variable (e.g. `GUNICORN_BIND=0.0.0.0:5500`).
+
+> **Important — run a single worker.** The repository-processing queue (see *Repository Processing Queue* below) stores its state in memory, so the app **must** run with one worker (`workers = 1`, already set in `gunicorn.conf.py`). Do **not** launch with `-w`/`--workers` greater than 1 or with `--max-requests` — doing so makes status polls hit a different (or recycled) worker that doesn't know the job, returning **HTTP 404** ("Status request failed (404)" in the UI). Because command-line flags override the config file, always prefer `gunicorn -c gunicorn.conf.py run:app`.
 
 ### Defined end-points
 Access the following endpoint in your web browser or use a tool like curl:
@@ -240,6 +242,109 @@ curl -X POST http://127.0.0.1:5000/api/process_repo \
 ```json
 { "message": "Repository request recorded." }
 ```
+
+### Repository Processing Queue (Local Mode)
+
+Processing a GitHub repository runs the full OSSPREY pipeline (RUST scraper →
+pex-forecaster → ReACT), which can take several minutes. To avoid overloading
+the server, requests are placed in a **FIFO queue** and only a bounded number run
+concurrently (default **2**). Instead of blocking until processing finishes, the
+upload endpoint returns a **job handle** immediately and the client polls for
+status.
+
+**Concurrency configuration** (environment variables):
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `MAX_CONCURRENT_JOBS` | `2` | Maximum number of pipeline jobs running at once. |
+| `ESTIMATED_JOB_SECONDS` | `120` | Seed estimate (seconds) used for wait-time calculations until real timings are observed. |
+
+> **Important:** The queue is held **in-process**, so the backend must run with a
+> **single worker** (`gunicorn.conf.py` sets `workers = 1`). Each worker process
+> keeps its own independent queue, so with multiple workers a status poll can land
+> on a worker that never saw the job and return **HTTP 404** ("Status request
+> failed (404)" in the UI). For the same reason, do **not** pass `--max-requests`
+> (recycling a worker mid-job wipes the queue and the running pipeline). To run
+> multiple workers you must first move the queue state to a shared store such as
+> Redis.
+
+#### Queue a Repository for Processing
+
+```bash
+POST /api/upload_git_link
+```
+
+**Request Body**
+
+```json
+{ "git_link": "https://github.com/owner/repo.git" }
+```
+
+- **Description**: Validates the `.git` link and enqueues a processing job.
+  Returns immediately without waiting for the pipeline to finish.
+- **Response**: `202 Accepted` with the initial job handle. Returns `400` if the
+  link is missing or is not a valid `.git` URL.
+
+**Successful Response**
+
+```json
+{
+  "job_id": "264535f4492c428cad4d8ac3747e1397",
+  "status": "queued",
+  "position": 1,
+  "estimated_wait_seconds": 120,
+  "queue_length": 1,
+  "running": 2,
+  "max_concurrent": 2,
+  "created_at": "2024-06-12T15:32:00+00:00",
+  "started_at": null,
+  "finished_at": null,
+  "error": null,
+  "metadata": { "git_link": "https://github.com/owner/repo.git" }
+}
+```
+
+#### Poll Job Status
+
+```bash
+GET /api/queue_status/<job_id>
+```
+
+- **Description**: Returns the current state of a job. `status` is one of
+  `queued`, `running`, `completed`, `failed`, or `cancelled`. While `queued`,
+  `position` and `estimated_wait_seconds` indicate where the job sits in line.
+  Once the job is `completed` (or `failed`), the response also includes the
+  pipeline `result` payload.
+- **Response**: `200 OK` with the job snapshot, or `404` if the job id is
+  unknown.
+
+**Example**
+
+```bash
+curl http://127.0.0.1:5000/api/queue_status/264535f4492c428cad4d8ac3747e1397
+```
+
+#### Queue Statistics
+
+```bash
+GET /api/queue_stats
+```
+
+- **Description**: Returns aggregate queue stats (`running`, `queued`,
+  `max_concurrent`, `avg_job_seconds`, `total_jobs`).
+- **Response**: `200 OK`.
+
+#### Cancel a Queued Job
+
+```bash
+POST /api/cancel_job/<job_id>
+```
+
+- **Description**: Cancels a job that has **not started running yet**. Running
+  jobs cannot be interrupted. Cancelling keeps the queue consistent and allows
+  the next waiting job to start.
+- **Response**: `200 OK` with the updated snapshot, or `404` if the job id is
+  unknown.
 
 ### List Registered Users
 

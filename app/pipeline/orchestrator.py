@@ -2,6 +2,7 @@ import os
 import glob
 import json
 import logging
+import traceback
 import concurrent.futures
 from datetime import datetime
 from dotenv import load_dotenv
@@ -21,11 +22,37 @@ db_name = os.environ.get("MONGO_DB_NAME", "decal-db")  # Use the correct DB name
 client = MongoClient(MONGODB_URI)
 db = client[db_name]  # Explicitly select database
 
+def extract_owner_repo(git_link):
+    """Extract the (owner, repo) pair from a git URL.
+
+    e.g. "https://github.com/RepoWise/frontend.git" -> ("RepoWise", "frontend")
+    """
+    link = git_link[:-4] if git_link.endswith(".git") else git_link
+    parts = link.rstrip("/").split("/")
+    repo = parts[-1] if parts else ""
+    owner = parts[-2] if len(parts) >= 2 else ""
+    return owner, repo
+
 def extract_project_name(git_link):
-    """Extract the project name from a git URL."""
-    if git_link.endswith(".git"):
-        git_link = git_link[:-4]
-    return git_link.rstrip("/").split("/")[-1]
+    """Bare repository name.
+
+    This matches the file names the scraper writes (e.g.
+    "frontend-commit-file-dev.csv"), so it is used for locating those CSVs.
+    """
+    return extract_owner_repo(git_link)[1]
+
+def make_project_key(owner, repo):
+    """Owner-qualified, filesystem-safe identifier used as the caching key, the
+    forecaster project name, and the basis for project_id.
+
+    The scraper names its output CSVs by repo name only, but the caches
+    (net-vis/<key>.json, forecasts/<key>.json) and the forecaster's own cache are
+    keyed by this value, so qualifying it with the owner prevents two repos that
+    share a name but have different owners (e.g. a/frontend vs b/frontend) from
+    colliding and serving each other's stale results.
+    """
+    raw = f"{owner}_{repo}" if owner else repo
+    return "".join(c if (c.isalnum() or c in ("-", "_")) else "_" for c in raw)
 
 def generate_project_id(project_name):
     """Generate a project_id by removing non-alphanumeric characters and lowercasing."""
@@ -70,6 +97,25 @@ def get_pre_computed_data(result_summary, net_vis_file, forecasts_file, project_
     return result_summary
     
 
+# Header for a placeholder (empty) issues CSV, matching the scraper's schema.
+# Used when a repository has no issues so the social network is simply empty.
+_EMPTY_ISSUES_HEADER = (
+    "type,issue_url,comment_url,repo_name,id,issue_num,title,user_login,"
+    "user_id,user_name,user_email,issue_state,created_at,updated_at,body,reactions"
+)
+
+
+def _write_empty_issues_csv(path):
+    """Create an issues CSV containing only a header row (no data).
+
+    The pex-forecaster explicitly supports an empty social network (it only
+    requires that the technical and social inputs are not *both* empty), so when
+    a repo has no issues we hand it a header-only CSV instead of failing.
+    """
+    with open(path, "w", newline="") as f:
+        f.write(_EMPTY_ISSUES_HEADER + "\n")
+
+
 def run_pipeline(git_link, tasks="ALL", month_range="0,-1"):
     """Orchestrates the entire pipeline and returns a structured JSON result."""
     result_summary = {}
@@ -77,8 +123,21 @@ def run_pipeline(git_link, tasks="ALL", month_range="0,-1"):
     # Store the git link immediately.
     result_summary["git_link"] = git_link
 
-    # Extract project_name and compute project_id early
-    project_name = extract_project_name(git_link)
+    # Captures any reason the forecast stage fails, so the end of the pipeline can
+    # surface it clearly instead of returning a "completed" job with zero months.
+    forecast_error = None
+
+    # ``project_name`` MUST be the bare repository name. The pex-forecaster derives
+    # a project's identity from the scraped CSV contents (the commit CSV's
+    # ``project`` column and the issues CSV's ``repo_name`` column, both the bare
+    # repo name): it names its network edgelists "<repo>__<month>.edgelist", runs a
+    # cross-contamination check that every network file starts with the project
+    # name, and looks the name up in its start-dates/incubation registry. Passing
+    # an owner-qualified key (e.g. "owner_repo") makes that check fail, so the
+    # forecast silently aborts and the UI shows 0 months. The scraper also names its
+    # output CSVs by the bare repo, so the same value locates them and keys the cache.
+    repo_name = extract_project_name(git_link)
+    project_name = repo_name
     project_id = generate_project_id(project_name)
     
     # --- Step 0: Fetch GitHub Repository Metadata ---
@@ -134,27 +193,62 @@ def run_pipeline(git_link, tasks="ALL", month_range="0,-1"):
         # process_project_data(output_dir, project_id, project_name)  # Ensures data is stored before fetching
 
         # --- Step 3: Locate CSV files for social and technical networks ---
-        print(f"Looking for: {project_name+'_issues.csv'} and {project_name+'-commit-file-dev.csv'}")
+        print(f"Looking for: {repo_name+'_issues.csv'} and {repo_name+'-commit-file-dev.csv'}")
 
-        social_csvs = glob.glob(os.path.join(output_dir, project_name+"_issues.csv"))
-        tech_csvs = glob.glob(os.path.join(output_dir, project_name+"-commit-file-dev.csv"))
-        # if not social_csvs:
-        #     result_summary["error"] = "No social network CSV (_issues.csv) found."
-        #     return result_summary
-        # if not tech_csvs:
-        #     result_summary["error"] = "No technical network CSV found."
-        #     return result_summary
-
-        social_csv = os.path.abspath(social_csvs[0])
+        social_csvs = glob.glob(os.path.join(output_dir, repo_name+"_issues.csv"))
+        tech_csvs = glob.glob(os.path.join(output_dir, repo_name+"-commit-file-dev.csv"))
+        # Technical (commit) data is required: without it there is no network to
+        # build and the scrape almost certainly failed.
+        if not tech_csvs:
+            result_summary["error"] = "No technical network CSV found."
+            return result_summary
         tech_csv = os.path.abspath(tech_csvs[0])
+
+        # Optional safety valve for very large repositories whose forecasting can
+        # exhaust memory (ending in an uncatchable OOM kill). Disabled by default;
+        # set MAX_COMMIT_CSV_MB to the largest commit-CSV size (MB) this host can
+        # process so oversized repos fail fast with a clear message.
+        try:
+            max_commit_csv_mb = float(os.environ.get("MAX_COMMIT_CSV_MB", "0"))
+        except ValueError:
+            max_commit_csv_mb = 0
+        if max_commit_csv_mb > 0:
+            tech_csv_mb = os.path.getsize(tech_csv) / (1024 * 1024)
+            if tech_csv_mb > max_commit_csv_mb:
+                result_summary["error"] = (
+                    f"Repository is too large to process safely: commit data is "
+                    f"{tech_csv_mb:.0f} MB, exceeding the {max_commit_csv_mb:.0f} MB "
+                    f"limit (MAX_COMMIT_CSV_MB). Increase the limit or provision more memory."
+                )
+                logging.error(result_summary["error"])
+                return result_summary
+
+        # Social (issues) data is OPTIONAL. A repository may simply have no
+        # issues; the forecaster accepts an empty social network, so synthesize a
+        # header-only issues CSV and continue (technical network + forecast still
+        # run, with an empty social network) instead of failing the whole job.
+        if social_csvs:
+            social_csv = os.path.abspath(social_csvs[0])
+        else:
+            social_csv = os.path.join(output_dir, repo_name + "_issues.csv")
+            logging.warning(
+                "No issues CSV for '%s'; proceeding with an empty social network "
+                "(placeholder: %s).", project_name, social_csv
+            )
+            _write_empty_issues_csv(social_csv)
+            result_summary["social_data_missing"] = True
 
         print("social and tech csv file names", social_csv, tech_csv)
         
         # --- Step 4: Run pex‑forecaster forecast (run for side effects only) ---
         try:
-            _ = run_forecast(tech_csv, social_csv, project_name, tasks, month_range)
+            forecast_result = run_forecast(tech_csv, social_csv, project_name, tasks, month_range)
+            if isinstance(forecast_result, dict) and forecast_result.get("error"):
+                forecast_error = forecast_result["error"]
+                logging.error("Forecast reported an error: %s", forecast_error)
         except Exception as e:
-            logging.error("Forecast processing error: " + str(e))
+            forecast_error = f"{type(e).__name__}: {e}"
+            logging.error("Forecast processing crashed:\n%s", traceback.format_exc())
 
         # ✅ Fetch Data from MongoDB and Add to Response (After Processing Completes)
         # print("PROJECT NAME AND ID PRINITNG")
@@ -186,18 +280,30 @@ def run_pipeline(git_link, tasks="ALL", month_range="0,-1"):
 
     
     
-    # --- Step 5: Run ReACT extractor (all months)---
-    try:
-        from .run_react import run_react_all
-        react_result = run_react_all()
-        result_summary["react"] = react_result
-    except Exception as e:
-        logging.error("ReACT extractor failed: " + str(e))
-        result_summary["react"] = {"error": str(e)}
-
-    # --- Step 6: Process net-vis JSON file ---
-
-    if os.path.exists(net_vis_file) and os.path.exists(forecasts_file):   
-        result_summary = get_pre_computed_data(result_summary, net_vis_file, forecasts_file, project_name, project_id)
+    # --- Load the forecast / network-visualization outputs ---
+    # NOTE: ReACT is intentionally NOT run here. It is handled entirely in the
+    # front-end; the backend must never invoke the ReACT extractor.
+    # The forecaster writes net-vis/<project>.json and forecasts/<project>.json.
+    # If both exist we attach them; otherwise the run produced no usable forecast,
+    # so the job is failed with a specific reason rather than reported "completed"
+    # with zero months.
+    if os.path.exists(net_vis_file) and os.path.exists(forecasts_file):
+        try:
+            result_summary = get_pre_computed_data(
+                result_summary, net_vis_file, forecasts_file, project_name, project_id
+            )
+        except Exception as e:
+            result_summary["error"] = (
+                f"Failed to read the forecast output for '{project_name}': "
+                f"{type(e).__name__}: {e}"
+            )
+            logging.error("Reading forecast output failed:\n%s", traceback.format_exc())
+    elif "error" not in result_summary:
+        reason = forecast_error or (
+            "the forecaster produced no output (no months could be computed) — "
+            "check the backend logs for the forecast stage"
+        )
+        result_summary["error"] = f"Forecast unavailable for '{project_name}': {reason}"
+        logging.error(result_summary["error"])
 
     return result_summary

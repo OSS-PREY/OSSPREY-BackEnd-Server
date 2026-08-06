@@ -1,3 +1,4 @@
+import os
 import math
 from flask import Blueprint, jsonify, redirect, request, url_for
 from flask_cors import cross_origin
@@ -8,8 +9,16 @@ from app.pipeline.orchestrator import run_pipeline
 from app.pipeline.run_pex import run_forecast
 from app.pipeline.rust_runner import run_rust_code
 from app.pipeline.update_pex import update_pex_generator
+from app.services.queue_manager import (
+    QueueManager,
+    STATUS_QUEUED,
+    STATUS_RUNNING,
+    STATUS_COMPLETED,
+    STATUS_FAILED,
+    STATUS_CANCELLED,
+)
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime
+from datetime import datetime, timezone
 from flask_jwt_extended import create_access_token # <-- ADD THIS IMPORT
 
 main_routes = Blueprint('main_routes', __name__)
@@ -21,6 +30,94 @@ db = mongo_client[Config.MONGODB_DB_NAME]
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _pipeline_result_is_error(result):
+    """Treat a pipeline result that carries an 'error' key as a failed job."""
+    return isinstance(result, dict) and bool(result.get('error'))
+
+
+def _repo_name_from_git_link(git_link):
+    """Extract an ``owner/repo`` name from a git URL (HTTPS or SSH form)."""
+    if not git_link:
+        return None
+    link = git_link.strip()
+    if link.lower().endswith('.git'):
+        link = link[:-4]
+    link = link.rstrip('/')
+    if '://' not in link and ':' in link:
+        # SSH form, e.g. git@github.com:owner/repo
+        link = link.split(':', 1)[1]
+    parts = [p for p in link.split('/') if p]
+    if len(parts) >= 2:
+        return f"{parts[-2]}/{parts[-1]}"
+    return parts[-1] if parts else None
+
+
+def _persist_job(snapshot):
+    """Mirror a queue job state change into MongoDB (``repo_jobs`` collection).
+
+    Registered as the queue's ``on_update`` listener so job history survives
+    backend restarts (the queue itself is in-memory). Failures here are logged
+    but never affect the pipeline.
+    """
+    try:
+        metadata = snapshot.get('metadata') or {}
+        git_link = metadata.get('git_link', '')
+        db.repo_jobs.update_one(
+            {'job_id': snapshot['job_id']},
+            {'$set': {
+                'job_id': snapshot['job_id'],
+                'git_link': git_link,
+                'repo_name': _repo_name_from_git_link(git_link) or git_link,
+                'status': snapshot['status'],
+                'created_at': snapshot['created_at'],
+                'started_at': snapshot['started_at'],
+                'finished_at': snapshot['finished_at'],
+                'error': snapshot['error'],
+            }},
+            upsert=True,
+        )
+    except Exception:
+        logger.exception('Failed to persist job %s', snapshot.get('job_id'))
+
+
+# Shared FIFO queue that runs the repository-processing pipeline with bounded
+# concurrency. Tunable via environment variables:
+#   MAX_CONCURRENT_JOBS   - max jobs running at once (default 2)
+#   ESTIMATED_JOB_SECONDS - seed estimate for wait-time calculations (default 120)
+pipeline_queue = QueueManager(
+    worker=run_pipeline,
+    max_concurrent=int(os.environ.get('MAX_CONCURRENT_JOBS', '2')),
+    default_job_seconds=int(os.environ.get('ESTIMATED_JOB_SECONDS', '120')),
+    result_is_error=_pipeline_result_is_error,
+    on_update=_persist_job,
+)
+
+
+def _sweep_stale_jobs():
+    """Fail MongoDB job records left non-terminal by a previous backend process.
+
+    The queue lives in process memory, so after a restart nothing will ever
+    advance those jobs again; without this sweep they would look pending
+    forever.
+    """
+    try:
+        result = db.repo_jobs.update_many(
+            {'status': {'$in': [STATUS_QUEUED, STATUS_RUNNING]}},
+            {'$set': {
+                'status': STATUS_FAILED,
+                'error': 'Interrupted by a backend restart.',
+                'finished_at': datetime.now(timezone.utc).isoformat(),
+            }},
+        )
+        if result.modified_count:
+            logger.info('Marked %d stale repo job(s) as failed.', result.modified_count)
+    except Exception:
+        logger.exception('Failed to sweep stale repo jobs')
+
+
+_sweep_stale_jobs()
 
 # This is to prevent any error occurring because of NaN value - this is converted to null
 def sanitize_document(doc):
@@ -1123,19 +1220,97 @@ def scrape_repository():
 @cross_origin(origin='*')
 def upload_git_link():
     """
-    Receives a .git link from the frontend and triggers the pipeline.
+    Receives a .git link from the frontend and queues it for processing.
+
+    Processing is bounded to a fixed number of concurrent jobs; any extra
+    requests wait in a FIFO queue. Instead of blocking until the pipeline
+    finishes, this returns a job handle immediately (HTTP 202). The client polls
+    ``GET /api/queue_status/<job_id>`` to track progress and retrieve the result.
     """
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         git_link = data.get('git_link', '').strip()
         if not git_link:
             return jsonify({'error': 'No git link provided.'}), 400
         if not git_link.lower().endswith('.git'):
             return jsonify({'error': 'Provided URL is not a valid .git link.'}), 400
 
-        logging.info(f"Received .git link: {git_link}")
-        pipeline_result = run_pipeline(git_link)
-        return jsonify(pipeline_result), 200
+        logging.info(f"Queueing .git link: {git_link}")
+        job = pipeline_queue.submit(git_link, metadata={'git_link': git_link})
+        return jsonify(job), 202
     except Exception as e:
-        logging.error(f"Error processing git link: {e}")
+        logging.error(f"Error queueing git link: {e}")
         return jsonify({'error': 'Internal server error.'}), 500
+
+
+@main_routes.route('/api/queue_status/<job_id>', methods=['GET'])
+@cross_origin(origin='*')
+def queue_status(job_id):
+    """Return the status of a queued/running/finished pipeline job.
+
+    The response includes ``status`` (queued|running|completed|failed|cancelled),
+    ``position`` in the queue, ``estimated_wait_seconds`` and, once the job is
+    finished, the pipeline ``result`` payload.
+    """
+    job = pipeline_queue.get_status(job_id, include_result=True)
+    if job is None:
+        return jsonify({'error': 'Job not found.'}), 404
+    return jsonify(job), 200
+
+
+@main_routes.route('/api/queue_stats', methods=['GET'])
+@cross_origin(origin='*')
+def queue_stats():
+    """Return aggregate queue statistics (running, queued, capacity)."""
+    return jsonify(pipeline_queue.stats()), 200
+
+
+@main_routes.route('/api/repo_jobs', methods=['GET'])
+@cross_origin(origin='*')
+def repo_jobs():
+    """List pipeline jobs for the "All Repos" page.
+
+    Returns two lists:
+      * ``pending``   - jobs still queued or running, taken from the live
+        in-memory queue so estimates and statuses are current. Each entry has
+        ``repo_name``, ``status``, ``created_at`` (ISO-8601 UTC) and
+        ``estimated_seconds`` until completion.
+      * ``processed`` - jobs that reached a terminal state
+        (completed|failed|cancelled), read from the MongoDB job history so
+        they survive backend restarts. Each entry has ``repo_name``,
+        ``status``, ``created_at`` and ``finished_at``.
+    """
+    try:
+        pending = []
+        for snap in pipeline_queue.list_jobs(statuses=(STATUS_QUEUED, STATUS_RUNNING)):
+            git_link = (snap.get('metadata') or {}).get('git_link', '')
+            pending.append({
+                'job_id': snap['job_id'],
+                'repo_name': _repo_name_from_git_link(git_link) or git_link,
+                'status': snap['status'],
+                'created_at': snap['created_at'],
+                'estimated_seconds': snap['estimated_wait_seconds'],
+            })
+
+        processed = list(
+            db.repo_jobs.find(
+                {'status': {'$in': [STATUS_COMPLETED, STATUS_FAILED, STATUS_CANCELLED]}},
+                {'_id': 0, 'job_id': 1, 'repo_name': 1, 'git_link': 1, 'status': 1,
+                 'created_at': 1, 'started_at': 1, 'finished_at': 1, 'error': 1},
+            ).sort('created_at', -1).limit(200)
+        )
+
+        return jsonify({'pending': pending, 'processed': processed}), 200
+    except Exception:
+        logger.exception('Error listing repo jobs')
+        return jsonify({'error': 'Internal server error.'}), 500
+
+
+@main_routes.route('/api/cancel_job/<job_id>', methods=['POST'])
+@cross_origin(origin='*')
+def cancel_job(job_id):
+    """Cancel a job that has not started running yet."""
+    job = pipeline_queue.cancel(job_id)
+    if job is None:
+        return jsonify({'error': 'Job not found.'}), 404
+    return jsonify(job), 200

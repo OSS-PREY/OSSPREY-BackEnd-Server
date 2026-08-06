@@ -9,6 +9,17 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from app import create_app
 
 
+def _floor_to_ms(dt):
+    """Floor a datetime to millisecond precision.
+
+    MongoDB (and mongomock) persist datetimes at millisecond resolution, so a
+    value read back is the inserted time truncated to the millisecond. We floor
+    the lower comparison bound to match; otherwise the assertion is flaky at the
+    sub-millisecond boundary.
+    """
+    return dt.replace(microsecond=(dt.microsecond // 1000) * 1000)
+
+
 def setup_mock_db(monkeypatch):
     mock_client = mongomock.MongoClient()
     mock_db = mock_client['test-db']
@@ -43,7 +54,8 @@ def test_record_view_adds_timestamp(monkeypatch):
 
     stored = mock_db.view_timestamps.find_one()
     assert stored is not None
-    assert before <= stored['timestamp'] <= after
+    # MongoDB/mongomock store millisecond precision; floor the lower bound to match.
+    assert _floor_to_ms(before) <= stored['timestamp'] <= after
 
 
 def test_get_view_count_returns_total(monkeypatch):

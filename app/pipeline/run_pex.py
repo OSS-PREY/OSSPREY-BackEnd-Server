@@ -66,5 +66,13 @@ def run_forecast(tech_csv, social_csv, project, tasks, month_range):
         if isinstance(result, pd.DataFrame):
             result = result.to_dict(orient='records')
         return result
+    except MemoryError:
+        logging.error("Forecast ran out of memory:\n%s", traceback.format_exc())
+        return {
+            "error": "Forecast ran out of memory while processing this repository; "
+                     "it may be too large for the available memory.",
+            "error_type": "MemoryError",
+        }
     except Exception as e:
-        return {"error": str(e)}
+        logging.error("Forecast processing failed:\n%s", traceback.format_exc())
+        return {"error": f"{type(e).__name__}: {e}", "error_type": type(e).__name__}
