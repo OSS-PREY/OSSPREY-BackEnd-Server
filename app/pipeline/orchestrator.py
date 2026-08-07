@@ -10,6 +10,7 @@ from pymongo import MongoClient
 from .update_pex import update_pex_generator
 from .rust_runner import run_rust_code
 from .run_pex import run_forecast  # Still imported so forecast can run if needed
+from .calibration import calibrate
 from .store_commit_issues import process_project_data  # Import MongoDB processing
 from .github_metadata import get_github_metadata
 
@@ -83,6 +84,10 @@ def get_pre_computed_data(result_summary, net_vis_file, forecasts_file, project_
         net_vis_data = json.load(f)
     tech_net = net_vis_data.get("tech", {})
     social_net = net_vis_data.get("social", {})
+    # Snapshot the month data before the project_name/project_id keys are mixed
+    # in below, so calibration sees months only.
+    tech_months = dict(tech_net)
+    social_months = dict(social_net)
     tech_net["project_name"] = project_name
     tech_net["project_id"] = project_id
     social_net["project_name"] = project_name
@@ -92,7 +97,18 @@ def get_pre_computed_data(result_summary, net_vis_file, forecasts_file, project_
     
     with open(forecasts_file, 'r') as f:
         forecasts_data = json.load(f)
-    result_summary["forecast_json"] = forecasts_data
+    # The model saturates at 1.0 for months on end, which renders as a flat,
+    # unreadable line. Re-express it against the project's own activity; see
+    # app/pipeline/calibration.py. The raw model output is kept alongside it.
+    raw = {}
+    for k, v in forecasts_data.items():
+        try:
+            raw[int(k)] = float(v)
+        except (TypeError, ValueError):
+            continue
+    calibrated = calibrate(raw, tech_months, social_months)
+    result_summary["forecast_json"] = {str(m): v for m, v in calibrated.items()}
+    result_summary["forecast_json_raw"] = forecasts_data
 
     return result_summary
     

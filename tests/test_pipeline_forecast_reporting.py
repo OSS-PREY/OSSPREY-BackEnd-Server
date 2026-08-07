@@ -69,7 +69,11 @@ def test_forecast_success_reports_months(monkeypatch, tmp_path):
     result = orch.run_pipeline(GIT)
 
     assert "error" not in result
-    assert result["forecast_json"] == {"0": 0.4, "1": 0.55}
+    # forecast_json is calibrated now (see app/pipeline/calibration.py); the
+    # untouched model output is preserved alongside it.
+    assert result["forecast_json_raw"] == {"0": 0.4, "1": 0.55}
+    assert set(result["forecast_json"]) == {"0", "1"}
+    assert all(0.0 < v < 1.0 for v in result["forecast_json"].values())
 
 
 def test_forecast_error_result_surfaces_reason(monkeypatch, tmp_path):
