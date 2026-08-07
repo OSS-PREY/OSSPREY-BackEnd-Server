@@ -90,6 +90,23 @@ def run_rust_code(git_link, function_purpose = 1): #Purpose = 1; it is being run
         logging.info("Cargo fix output: " + build_result.stdout)
         """        
         
+        # Clear any output left by a previous run before scraping. These files
+        # are shared between accounts at mode 664, so if the previous scrape ran
+        # as a different user the miner cannot truncate them and fails with
+        # EACCES -- but it still exits 0, so the failure surfaces much later as a
+        # bogus "Repository is private!". Unlinking works regardless of owner
+        # because the directory itself is world-writable.
+        repo_stem = git_link.rstrip("/").split("/")[-1].replace(".git", "")
+        for stale in (f"{repo_stem}_issues.csv", f"{repo_stem}-commit-file-dev.csv"):
+            stale_path = os.path.join(output_folder, stale)
+            try:
+                os.remove(stale_path)
+                logging.info("Removed stale scraper output %s", stale_path)
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                logging.warning("Could not remove stale %s: %s", stale_path, e)
+
         cmd1 = [
             os.path.join("target", "debug", "miner"),
             "--fetch-github-issues",

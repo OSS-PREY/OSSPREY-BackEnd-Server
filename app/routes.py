@@ -22,6 +22,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta, timezone
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
 import hashlib
+import re
 import secrets
 
 main_routes = Blueprint('main_routes', __name__)
@@ -1401,6 +1402,14 @@ def get_eclipse_predictions_api(project_id, month):
         return jsonify({'error': 'Internal server error.'}), 500
 
 
+# A GitHub repo URL is exactly https://github.com/<owner>/<repo> with an
+# optional .git suffix -- no extra path segments, no second URL glued on.
+GITHUB_REPO_URL_RE = re.compile(
+    r'^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?(?:\.git)?/?$',
+    re.IGNORECASE,
+)
+
+
 ## Scrape repository independently
 @main_routes.route('/api/scrape_repository', methods=['POST'])
 @cross_origin(origin='*')
@@ -1439,6 +1448,15 @@ def upload_git_link():
             return jsonify({'error': 'No git link provided.'}), 400
         if not git_link.lower().endswith('.git'):
             return jsonify({'error': 'Provided URL is not a valid .git link.'}), 400
+        # Must be exactly one owner/repo path. Without this, a mangled value such
+        # as two concatenated URLs still ends in ".git", and the pipeline (which
+        # takes the LAST path segment as the project) happily analyses a
+        # different repository and reports success for it.
+        if not GITHUB_REPO_URL_RE.match(git_link):
+            return jsonify({
+                'error': 'Provided URL is not a valid GitHub repository link. '
+                         'Expected https://github.com/<owner>/<repo>.git'
+            }), 400
 
         logging.info(f"Queueing .git link: {git_link}")
         job = pipeline_queue.submit(git_link, metadata={'git_link': git_link})
