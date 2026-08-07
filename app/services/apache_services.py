@@ -16,9 +16,9 @@ from pymongo import MongoClient
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize MongoDB client
-mongo_client = MongoClient(Config.MONGODB_URI)
-db = mongo_client[Config.MONGODB_DB_NAME]
+# Reference data (forecasts, networks, links, measures) comes from JSON
+# files; the stateful collections stay on Mongo. See app/db.py.
+from app.db import db, mongo_client
 
 # Fetch all repositories from the Apache GitHub organization and store them in MongoDB
 def fetch_apache_repositories_from_github():

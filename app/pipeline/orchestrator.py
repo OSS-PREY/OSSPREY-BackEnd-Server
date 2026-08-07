@@ -19,9 +19,9 @@ load_dotenv()
 executor = concurrent.futures.ThreadPoolExecutor(max_workers=16)  # Ensures non-blocking execution
 
 MONGODB_URI = os.environ.get("MONGODB_URI")
-db_name = os.environ.get("MONGO_DB_NAME", "decal-db")  # Use the correct DB name
-client = MongoClient(MONGODB_URI)
-db = client[db_name]  # Explicitly select database
+# Reference data (forecasts, networks, links, measures) comes from JSON
+# files; the stateful collections stay on Mongo. See app/db.py.
+from app.db import db
 
 def extract_owner_repo(git_link):
     """Extract the (owner, repo) pair from a git URL.

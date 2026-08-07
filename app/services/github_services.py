@@ -4,9 +4,9 @@ from app.config import Config
 from itertools import cycle
 from pymongo import MongoClient
 
-# Initialize MongoDB client
-mongo_client = MongoClient(Config.MONGODB_URI)
-db = mongo_client[Config.MONGODB_DB_NAME]
+# Reference data (forecasts, networks, links, measures) comes from JSON
+# files; the stateful collections stay on Mongo. See app/db.py.
+from app.db import db, mongo_client
 
 def fetch_repos_service():
     try:

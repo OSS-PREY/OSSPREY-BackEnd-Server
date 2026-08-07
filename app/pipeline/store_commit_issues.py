@@ -146,12 +146,9 @@ def process_csv_and_store(csv_file: str, earliest_dt: str = None, project_id: st
 
         final_doc["months"].setdefault(m_index, []).append(entry)
 
-    client = MongoClient(MONGODB_URI)
-    db = client.get_default_database()
-    collection = db[link_type]
+    from app.db import db
 
-    result = collection.replace_one({"project_id": project_id}, final_doc, upsert=True)
-    client.close()
+    db[link_type].replace_one({"project_id": project_id}, final_doc, upsert=True)
 
     #print(f"File classified as: {file_type.upper()}")
     #print(f"Successfully upserted data for project_id='{project_id}'.")
