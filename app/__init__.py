@@ -40,4 +40,8 @@ def create_app():
     from app.auth_routes import auth_bp
     app.register_blueprint(auth_bp)
 
+    # Chat widget -> RepoWise adapter (/api/chat/*).
+    from app.repowise import repowise_bp
+    app.register_blueprint(repowise_bp)
+
     return app
