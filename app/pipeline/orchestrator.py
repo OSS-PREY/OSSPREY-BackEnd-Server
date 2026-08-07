@@ -11,7 +11,7 @@ from .update_pex import update_pex_generator
 from .rust_runner import run_rust_code
 from .run_pex import run_forecast  # Still imported so forecast can run if needed
 from .calibration import calibrate
-from .store_commit_issues import process_project_data  # Import MongoDB processing
+from .commit_issue_links import store_links
 from .github_metadata import get_github_metadata
 
 load_dotenv()
@@ -108,6 +108,10 @@ def get_pre_computed_data(result_summary, net_vis_file, forecasts_file, project_
             continue
     calibrated = calibrate(raw, tech_months, social_months)
     result_summary["forecast_json"] = {str(m): v for m, v in calibrated.items()}
+
+    # The per-developer commit/issue links are deliberately NOT attached here:
+    # gem5's are 4 MB and would be paid on every dashboard load. The frontend
+    # fetches them a month at a time from /api/local_{commit,issue}_links.
     result_summary["forecast_json_raw"] = forecasts_data
 
     return result_summary
@@ -285,13 +289,12 @@ def run_pipeline(git_link, tasks="ALL", month_range="0,-1"):
             forecast_error = f"{type(e).__name__}: {e}"
             logging.error("Forecast processing crashed:\n%s", traceback.format_exc())
 
-        # ✅ Fetch Data from MongoDB and Add to Response (After Processing Completes)
-        # print("PROJECT NAME AND ID PRINITNG")
-        # print(project_name, project_id)
-        # mongo_data = fetch_project_data_from_db(project_id)
-        # print("MONGO DAtA SO FAR", mongo_data)
-        # result_summary.update(mongo_data)
-        # print("Summary so far: ", result_summary)
+        # --- Step 4b: per-developer commit/issue links -------------------
+        # Built from the same two CSVs the forecast just consumed, so the month
+        # numbering and the author names line up with the networks by
+        # construction. Without this, clicking a node in the dashboard opens an
+        # empty "Commit Links for <name>" dialog.
+        store_links(db, tech_csv, social_csv, project_id, project_name)
         
         # --- Step 4 - (Cache collection) Move CSV files to archive folder ---
         # try:

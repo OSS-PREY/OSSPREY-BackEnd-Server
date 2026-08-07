@@ -955,6 +955,53 @@ def get_commit_links(project_id, month):
         logger.error(f"Error fetching commit_links data for project '{project_id}', month '{month}': {e}")
         return jsonify({'error': 'Internal server error.'}), 500
 
+# Locally processed repos: the per-developer commit/issue links behind the
+# network node drilldowns. Served on demand rather than bundled into the
+# pipeline response -- gem5's table alone is 4 MB, which would be paid on every
+# dashboard load whether or not anyone clicks a node.
+def _local_links(collection, project_id, month, key):
+    # The dashboard identifies a locally processed repo as "local_<repo name>"
+    # while the pipeline stores it under generate_project_id(repo name), i.e.
+    # alphanumerics only, lowercased. Accept either.
+    raw = (project_id or '').strip()
+    if raw.lower().startswith('local_'):
+        raw = raw[len('local_'):]
+    normalized = ''.join(c for c in raw if c.isalnum()).lower()
+    project = collection.find_one({'project_id': normalized})
+    if not project:
+        return jsonify({'error': f"Project '{project_id}' not found."}), 404
+    entries = (project.get('months') or {}).get(str(month))
+    if entries is None:
+        return jsonify({'error': f"Month '{month}' data not found for project '{project_id}'."}), 404
+    return jsonify({
+        'project_id': project['project_id'],
+        'project_name': project.get('project_name', ''),
+        'month': month,
+        key: [sanitize_document(e) for e in entries if isinstance(e, dict)],
+    }), 200
+
+
+@main_routes.route('/api/local_commit_links/<project_id>/<int:month>', methods=['GET'])
+@cross_origin(origin='*')
+def get_local_commit_links(project_id, month):
+    try:
+        return _local_links(db.local_commit_links, project_id, month, 'commits')
+    except Exception as e:
+        logger.error(f"Error fetching local commit links for '{project_id}'/{month}: {e}")
+        return jsonify({'error': 'Internal server error.'}), 500
+
+
+@main_routes.route('/api/local_issue_links/<project_id>/<int:month>', methods=['GET'])
+@cross_origin(origin='*')
+def get_local_issue_links(project_id, month):
+    try:
+        # keyed 'commits' because the frontend parses both link tables the same way
+        return _local_links(db.local_issue_links, project_id, month, 'commits')
+    except Exception as e:
+        logger.error(f"Error fetching local issue links for '{project_id}'/{month}: {e}")
+        return jsonify({'error': 'Internal server error.'}), 500
+
+
 # [ECLIPSE] This is to fetch commit links data for a particular project for a particular month
 @main_routes.route('/eclipse/commit_links/<project_id>/<int:month>', methods=['GET'])
 @cross_origin(origin='*') 

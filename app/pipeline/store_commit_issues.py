@@ -154,60 +154,14 @@ def process_csv_and_store(csv_file: str, earliest_dt: str = None, project_id: st
     #print(f"Successfully upserted data for project_id='{project_id}'.")
     #print(f"MongoDB upsert: matched_count={result.matched_count}, modified_count={result.modified_count}")
 
-def process_project_data(folder_path: str, project_id: str = None, project_name: str = None):
+def process_project_data(*_args, **_kwargs):
+    """Removed. Superseded by app/pipeline/commit_issue_links.store_links().
+
+    This scanned a directory for *any* CSV with commit/issue headers, so a
+    leftover file from another repository was picked up and stored under this
+    project's id -- 32 of the stored documents shared just 3 distinct payloads.
+    The replacement takes the exact CSV paths the pipeline resolved.
     """
-    Detects commit and issue CSVs in a folder and processes them in parallel.
-    Now accepts optional project_id and project_name so that all CSVs are processed with a consistent identifier.
-    """
-
-    commit_csv = None
-    issue_csv = None
-
-    # Auto-detect CSVs in folder
-    for file in os.listdir(folder_path):
-        file_path = os.path.join(folder_path, file)
-        if file.endswith(".csv"):
-            with open(file_path, "r", encoding="utf-8") as f:
-                reader = csv.reader(f)
-                headers = next(reader, None)
-                if headers:
-                    if "commit_sha" in [h.lower() for h in headers] or "commit_url" in [h.lower() for h in headers]:
-                        commit_csv = file_path
-                    elif "issue_url" in [h.lower() for h in headers]:
-                        issue_csv = file_path
-                        
-    with open(commit_csv, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-
-    if not rows:
-        print(f"No data in {csv_file}. Nothing to process.")
-        return
-    
-    file_type = detect_file_type(reader.fieldnames or [])
-    date_field = "date" if file_type == "commit" else "created_at"
-    
-    datetime_formats = {
-        "commit": ["%Y-%m-%d %H:%M:%S %Z", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S%z"],
-        "issue": ["%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S %Z", "%Y-%m-%d %H:%M:%S"]
-    }
-
-    all_datetimes = [parse_datetime(row.get(date_field, "").strip(), datetime_formats[file_type]) for row in rows if row.get(date_field)]
-    all_datetimes = [dt for dt in all_datetimes if dt]
-    
-    earliest_dt = min(all_datetimes)
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        futures = {}
-
-        if commit_csv:
-            futures[executor.submit(process_csv_and_store, commit_csv, earliest_dt, project_id, project_name)] = "commit"
-
-        if issue_csv:
-            futures[executor.submit(process_csv_and_store, issue_csv, earliest_dt, project_id, project_name)] = "issue"
-
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                future.result()  # Raises exceptions if any occur
-            except Exception as e:
-                print(f"Error in processing {futures[future]} file: {e}")
+    raise NotImplementedError(
+        "use app.pipeline.commit_issue_links.store_links(db, tech_csv, social_csv, ...)"
+    )
