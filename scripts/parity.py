@@ -40,8 +40,9 @@ def months_for(collection, pid, n=3):
 
 def build_urls():
     urls = [
-        "/api/projects", "/api/eclipse_projects", "/api/monthly_ranges",
-        "/api/github_repositories", "/api/apache_project_description",
+        "/api/projects", "/api/project_info", "/eclipse/project_info",
+        "/api/monthly_ranges", "/api/github_repositories",
+        "/api/project_description", "/api/github_stars",
     ]
     per_month = [
         ("tech_net", "/api/tech_net/%s/%d"),
@@ -66,6 +67,11 @@ def build_urls():
                        ("eclipse_grad_forecast", "/eclipse/grad_forecast/%s")]:
         for pid in sample_ids(coll, 5):
             urls.append(tmpl % pid)
+    for coll, tmpl in [("grad_forecast", "/api/predictions/%s/%d"),
+                       ("eclipse_grad_forecast", "/eclipse/predictions/%s/%d")]:
+        for pid in sample_ids(coll, 4):
+            for m in (1, 12, 999999):
+                urls.append(tmpl % (pid, m))
     urls.append("/api/project_info/definitely-not-a-project")
     return urls
 

@@ -251,3 +251,14 @@ code {
   padding: 0.2rem 0.4rem;
   border-radius: 0.3rem;
 }
+
+.doc-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.95rem;
+}
+
+.doc-link:hover,
+.doc-link:focus-visible {
+  text-decoration: underline;
+}

@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OSSPREY — How the Chatbot Works</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    /* Prose styles local to this page; style.css is built around the registry
+       table and has nothing for long-form documentation. */
+    .doc {
+      max-width: 52rem;
+      margin: 0 auto;
+      padding: 0 1.25rem 3rem;
+    }
+    .doc section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 10px 30px var(--shadow);
+      padding: 1.5rem 1.75rem;
+      margin-bottom: 1.25rem;
+    }
+    .doc h2 {
+      margin-top: 0;
+      font-size: 1.25rem;
+    }
+    .doc h3 {
+      font-size: 1rem;
+      margin-bottom: 0.35rem;
+    }
+    .doc code {
+      background: var(--code-bg);
+      border-radius: 4px;
+      padding: 0.1em 0.4em;
+      font-size: 0.9em;
+    }
+    .doc ol,
+    .doc ul {
+      padding-left: 1.25rem;
+    }
+    .doc li {
+      margin-bottom: 0.4rem;
+    }
+    .doc .muted {
+      color: var(--muted);
+    }
+    .callout {
+      border-left: 4px solid var(--accent);
+      padding-left: 1rem;
+    }
+    .flow {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+      margin: 0.75rem 0 0;
+      padding: 0;
+      list-style: none;
+    }
+    .flow li {
+      background: var(--code-bg);
+      border-radius: 999px;
+      padding: 0.3rem 0.85rem;
+      margin: 0;
+      white-space: nowrap;
+    }
+    .flow li::after {
+      content: " →";
+      color: var(--muted);
+    }
+    .flow li:last-child::after {
+      content: "";
+    }
+    .doc table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    .doc th,
+    .doc td {
+      text-align: left;
+      padding: 0.5rem 0.6rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .nav-link {
+      display: inline-block;
+      margin-top: 0.5rem;
+      color: var(--accent);
+    }
+    .table-scroll {
+      overflow-x: auto;
+    }
+  </style>
+  <script>
+    // Match the theme the registry page stored, so navigating between the two
+    // pages does not flip the colours.
+    try {
+      var t = localStorage.getItem('ossprey-docs-theme');
+      if (t === 'light' || t === 'dark') {
+        document.documentElement.classList.add('theme-' + t);
+      }
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <header class="page-header">
+    <h1>How the OSSPREY Chatbot Works</h1>
+    <p class="tagline">
+      A question-answering assistant for the repository you have loaded
+    </p>
+    <a class="nav-link" href="index.html">← Back to the User Registry</a>
+  </header>
+
+  <main class="doc">
+    <section class="callout">
+      <h2>In one sentence</h2>
+      <p>
+        The chatbot is a <strong>thin wrapper over RepoWise</strong>. OSSPREY does
+        not run its own language model or its own retrieval index — it forwards
+        your question to the RepoWise service, which does the retrieval and the
+        generation, and renders what comes back.
+      </p>
+      <p class="muted">
+        RepoWise is a separate service maintained alongside OSSPREY. It runs on
+        the same host and is never exposed to the browser directly.
+      </p>
+    </section>
+
+    <section>
+      <h2>What the wrapper actually does</h2>
+      <p>
+        The browser only ever talks to OSSPREY's own <code>/api/chat/*</code>
+        endpoints. A single backend module,
+        <code>app/repowise.py</code>, is the one place that knows RepoWise's URL,
+        payload shapes and quirks. It is responsible for:
+      </p>
+      <ul>
+        <li>
+          <strong>Deriving the project id.</strong> A GitHub URL becomes
+          <code>owner-repo</code> in lowercase, matching RepoWise's own
+          <code>parse_github_url()</code> character for character. A mismatch here
+          would silently answer questions about the wrong repository.
+        </li>
+        <li>
+          <strong>Keeping RepoWise off the public surface.</strong> Its address
+          comes from <code>REPOWISE_BASE_URL</code> (default
+          <code>http://localhost:8000</code>) and is never sent to the browser.
+        </li>
+        <li>
+          <strong>Turning failures into something readable.</strong> A refused
+          connection or a timeout becomes "The assistant is temporarily
+          unavailable", not a stack trace.
+        </li>
+        <li>
+          <strong>Staying stateless.</strong> Conversation state round-trips
+          through the client, so no request depends on which worker served the
+          previous turn.
+        </li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>The request flow</h2>
+      <ol class="flow">
+        <li>Browser</li>
+        <li>OSSPREY <code>/api/chat/*</code></li>
+        <li>adapter</li>
+        <li>RepoWise</li>
+        <li>retrieval + LLM</li>
+        <li>answer</li>
+      </ol>
+      <h3>1. Opening a conversation</h3>
+      <p>
+        When you load a repository, the widget calls
+        <code>POST /api/chat/session</code> with the repo's GitHub URL. The adapter
+        asks RepoWise whether that project is already indexed. If it is, the call
+        returns immediately. If it is not, RepoWise crawls and embeds the
+        repository first — that can take minutes, which is why the widget shows a
+        "preparing context" state rather than appearing to hang.
+      </p>
+      <h3>2. Asking a question</h3>
+      <p>
+        Each question is a <code>POST /api/chat/message</code> carrying the query,
+        the project id and the conversation state from the previous turn. The
+        adapter forwards it to RepoWise's <code>/api/query</code> with
+        <code>temperature: 0</code> and a five-result retrieval budget, then
+        returns the answer along with the sources it was drawn from and any
+        follow-up questions RepoWise suggests.
+      </p>
+      <h3>3. While you wait</h3>
+      <p>
+        Generation runs on CPU and is not fast, so the widget shows a rotating
+        status word and a live elapsed timer instead of a frozen spinner, then
+        reveals the finished answer progressively.
+      </p>
+    </section>
+
+    <section>
+      <h2>Endpoints</h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">OSSPREY endpoint</th>
+              <th scope="col">Calls on RepoWise</th>
+              <th scope="col">Purpose</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>GET /api/chat/health</code></td>
+              <td><code>GET /api/system-status</code></td>
+              <td>Is the assistant up, and how many projects are indexed</td>
+            </tr>
+            <tr>
+              <td><code>POST /api/chat/session</code></td>
+              <td>
+                <code>GET /api/projects/&lt;id&gt;</code>,
+                <code>POST /api/projects/add</code>
+              </td>
+              <td>Ensure the repository is indexed; return its project id</td>
+            </tr>
+            <tr>
+              <td><code>POST /api/chat/message</code></td>
+              <td><code>POST /api/query</code></td>
+              <td>Answer one question in the context of that repository</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>Limits worth knowing</h2>
+      <ul>
+        <li>
+          <strong>GitHub repositories only.</strong> Apache and Eclipse
+          foundation projects are selected by name and carry no GitHub URL, so
+          there is nothing for RepoWise to index and the chatbot cannot answer
+          questions about them.
+        </li>
+        <li>
+          <strong>The first question about a new repository is slow.</strong>
+          Indexing happens on demand, once per repository.
+        </li>
+        <li>
+          <strong>Answers are grounded in the repository, not in OSSPREY's
+          forecasts.</strong> The chatbot reads the repository's own content; it
+          does not see the sustainability model's predictions.
+        </li>
+        <li>
+          <strong>If RepoWise is down, the chatbot is down.</strong> The rest of
+          the dashboard is unaffected — the adapter fails on its own.
+        </li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="page-footer">
+    <small>
+      Implemented in <code>app/repowise.py</code> (backend) and
+      <code>src/components/ChatWidget.vue</code> (frontend).
+    </small>
+  </footer>
+</body>
+</html>
