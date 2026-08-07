@@ -2,9 +2,14 @@
 import subprocess
 import os
 import logging
+import time
+import urllib.error
+import urllib.request
 from dotenv import load_dotenv
 import pandas as pd
 import json
+
+from app.config import Config
 
 load_dotenv()
 
@@ -59,6 +64,101 @@ def scraper_env():
     os.makedirs(SCRAPER_TMPDIR, exist_ok=True)
     env["TMPDIR"] = SCRAPER_TMPDIR
     return env
+
+
+# The issue scrape is retried this many times when it comes back empty but the
+# repository is known to have issues. Waits are long because a GitHub secondary
+# rate limit asks for "a few minutes", not seconds.
+ISSUE_FETCH_ATTEMPTS = 3
+ISSUE_RETRY_WAITS = (60, 180)
+
+
+def issues_have_rows(path):
+    """True when the issues CSV holds at least one row beyond its header."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            fh.readline()
+            return bool(fh.readline().strip())
+    except OSError:
+        return False
+
+
+def github_issue_count(git_link):
+    """How many issues GitHub reports for the repo, or None if unknown.
+
+    A header-only CSV is ambiguous on its own: laravel/laravel genuinely has
+    zero issues while golang/go has 72,726 and was simply refused. This is the
+    one call that tells the two apart, so an empty-but-correct scrape is not
+    retried and a rejected one is not accepted.
+    """
+    tokens = getattr(Config, "GITHUB_TOKENS", None) or []
+    if not tokens:
+        return None
+    owner, repo = extract_owner_repo_local(git_link)
+    if not owner or not repo:
+        return None
+    url = (f"https://api.github.com/search/issues"
+           f"?q=repo:{owner}/{repo}+type:issue&per_page=1")
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"bearer {tokens[0]}",
+        "User-Agent": "ossprey-pipeline",
+        "Accept": "application/vnd.github+json",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.load(r).get("total_count")
+    except Exception as e:
+        logging.warning("Could not read issue count for %s/%s: %s", owner, repo, e)
+        return None
+
+
+def extract_owner_repo_local(git_link):
+    """(owner, repo) from a git URL.
+
+    Duplicated from orchestrator rather than imported: orchestrator imports this
+    module, so importing back would be a cycle.
+    """
+    link = git_link[:-4] if git_link.endswith(".git") else git_link
+    parts = link.rstrip("/").split("/")
+    return (parts[-2] if len(parts) >= 2 else "", parts[-1] if parts else "")
+
+
+def fetch_issues_with_retry(cmd, scraper_dir, issues_path, git_link):
+    """Run the issue scrape, retrying while it returns nothing it should have.
+
+    Returns True when the CSV ends up trustworthy -- either it has rows, or the
+    repository really has no issues.
+    """
+    for attempt in range(ISSUE_FETCH_ATTEMPTS):
+        result = subprocess.run(cmd, cwd=scraper_dir, capture_output=True,
+                                text=True, check=True, env=scraper_env())
+        logging.info("Command 1 output: " + (result.stdout or ""))
+        if issues_have_rows(issues_path):
+            return True
+
+        expected = github_issue_count(git_link)
+        if expected == 0:
+            logging.info("%s has no issues; empty issues CSV is correct.", git_link)
+            return True
+        if expected is None:
+            logging.warning(
+                "Issues CSV for %s is empty and the true issue count could not be "
+                "checked; accepting it rather than retrying blindly.", git_link)
+            return False
+
+        if attempt < ISSUE_FETCH_ATTEMPTS - 1:
+            wait = ISSUE_RETRY_WAITS[min(attempt, len(ISSUE_RETRY_WAITS) - 1)]
+            logging.warning(
+                "Issues CSV for %s is empty but GitHub reports %d issues -- the "
+                "scrape was rejected (secondary rate limit). Retry %d/%d in %ds.",
+                git_link, expected, attempt + 2, ISSUE_FETCH_ATTEMPTS, wait)
+            time.sleep(wait)
+        else:
+            logging.error(
+                "Issues CSV for %s still empty after %d attempts though GitHub "
+                "reports %d issues. The social network will be empty.",
+                git_link, ISSUE_FETCH_ATTEMPTS, expected)
+    return False
 
 
 def run_rust_code(git_link, function_purpose = 1): #Purpose = 1; it is being run for OSSPREY, otherwise its for other tool
@@ -131,15 +231,8 @@ def run_rust_code(git_link, function_purpose = 1): #Purpose = 1; it is being run
             "--github-output-folder=output"
         ]
         logging.info("Running command: " + " ".join(cmd1))
-        cmd1_result = subprocess.run(
-            cmd1,
-            cwd=scraper_dir,
-            capture_output=True,
-            text=True,
-            check=True,
-            env=scraper_env()
-        )
-        logging.info("Command 1 output: " + cmd1_result.stdout)
+        issues_path = os.path.join(output_folder, f"{repo_stem}_issues.csv")
+        fetch_issues_with_retry(cmd1, scraper_dir, issues_path, git_link)
 
         cmd2 = [
             os.path.join("target", "debug", "miner"),

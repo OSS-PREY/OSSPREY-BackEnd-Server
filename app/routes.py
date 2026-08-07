@@ -6,6 +6,12 @@ from app.config import Config
 from pymongo import MongoClient
 import logging
 from app.pipeline.orchestrator import run_pipeline
+from app.pipeline.project_identity import (
+    collision_with,
+    extract_project_name,
+    generate_project_id,
+    repo_key,
+)
 from app.pipeline.run_pex import run_forecast
 from app.pipeline.calibration import calibrate
 from app.pipeline.rust_runner import run_rust_code
@@ -1556,6 +1562,33 @@ def upload_git_link():
                 'error': 'Provided URL is not a valid GitHub repository link. '
                          'Expected https://github.com/<owner>/<repo>.git'
             }), 400
+
+        # Two repositories with the same name resolve to one project_id and one
+        # set of scraper output filenames, so the second would overwrite the
+        # first's stored record -- or corrupt it mid-scrape when both run at
+        # once. Refuse it loudly instead. Checked against both stored projects
+        # and jobs already in the queue, since neither has written yet.
+        taken = collision_with(db, git_link)
+        if not taken:
+            incoming = repo_key(git_link)
+            wanted = generate_project_id(extract_project_name(git_link))
+            for snap in pipeline_queue.list_jobs(statuses=(STATUS_QUEUED, STATUS_RUNNING)):
+                queued_link = (snap.get('metadata') or {}).get('git_link', '')
+                if not queued_link:
+                    continue
+                if (generate_project_id(extract_project_name(queued_link)) == wanted
+                        and repo_key(queued_link) != incoming):
+                    taken = repo_key(queued_link)
+                    break
+        if taken:
+            logging.warning(
+                "Rejected %s: project id already belongs to %s", git_link, taken)
+            return jsonify({
+                'error': f"The name '{extract_project_name(git_link)}' is already "
+                         f"used by {taken}. Processing this repository would "
+                         f"overwrite it. Rename one of them to continue.",
+                'conflicts_with': taken,
+            }), 409
 
         logging.info(f"Queueing .git link: {git_link}")
         job = pipeline_queue.submit(git_link, metadata={'git_link': git_link})

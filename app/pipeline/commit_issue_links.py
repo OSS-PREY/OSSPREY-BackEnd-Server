@@ -84,10 +84,12 @@ def _read(path):
         return list(csv.DictReader(line.replace("\0", "") for line in fh))
 
 
-def build_links(csv_path, project_id, project_name, kind):
-    """{project_id, project_name, last_fetched, months: {"<m>": [entry, ...]}}.
+def build_links(csv_path, project_id, project_name, kind, git_link=None):
+    """{project_id, project_name, git_link, last_fetched, months: {"<m>": [...]}}.
 
     ``kind`` is "commit" or "issue"; returns None when there is nothing to store.
+    ``git_link`` records which repository the rows came from, so a later job for
+    a same-named repository under a different owner can be told apart.
     """
     date_field = "date" if kind == "commit" else "created_at"
     author_field = "name" if kind == "commit" else "user_name"
@@ -132,12 +134,13 @@ def build_links(csv_path, project_id, project_name, kind):
     return {
         "project_id": project_id,
         "project_name": project_name,
+        "git_link": git_link,
         "last_fetched": datetime.utcnow().strftime("%a %b %d %H:%M:%S %Y"),
         "months": months,
     }
 
 
-def store_links(db, tech_csv, social_csv, project_id, project_name):
+def store_links(db, tech_csv, social_csv, project_id, project_name, git_link=None):
     """Build and persist both tables. Never raises: a failure here must not take
     the repository-processing pipeline down with it."""
     written = {}
@@ -146,7 +149,7 @@ def store_links(db, tech_csv, social_csv, project_id, project_name):
         (social_csv, "issue", "local_issue_links"),
     ):
         try:
-            doc = build_links(csv_path, project_id, project_name, kind)
+            doc = build_links(csv_path, project_id, project_name, kind, git_link)
             if doc is None:
                 continue
             db[collection].replace_one({"project_id": project_id}, doc, upsert=True)

@@ -12,6 +12,14 @@ from .rust_runner import run_rust_code
 from .run_pex import run_forecast  # Still imported so forecast can run if needed
 from .calibration import calibrate
 from .commit_issue_links import store_links
+from .project_identity import (  # noqa: F401 - re-exported for callers
+    collision_with,
+    extract_owner_repo,
+    extract_project_name,
+    generate_project_id,
+    project_source,
+    repo_key,
+)
 from .github_metadata import get_github_metadata
 
 load_dotenv()
@@ -22,42 +30,6 @@ MONGODB_URI = os.environ.get("MONGODB_URI")
 # Reference data (forecasts, networks, links, measures) comes from JSON
 # files; the stateful collections stay on Mongo. See app/db.py.
 from app.db import db
-
-def extract_owner_repo(git_link):
-    """Extract the (owner, repo) pair from a git URL.
-
-    e.g. "https://github.com/RepoWise/frontend.git" -> ("RepoWise", "frontend")
-    """
-    link = git_link[:-4] if git_link.endswith(".git") else git_link
-    parts = link.rstrip("/").split("/")
-    repo = parts[-1] if parts else ""
-    owner = parts[-2] if len(parts) >= 2 else ""
-    return owner, repo
-
-def extract_project_name(git_link):
-    """Bare repository name.
-
-    This matches the file names the scraper writes (e.g.
-    "frontend-commit-file-dev.csv"), so it is used for locating those CSVs.
-    """
-    return extract_owner_repo(git_link)[1]
-
-def make_project_key(owner, repo):
-    """Owner-qualified, filesystem-safe identifier used as the caching key, the
-    forecaster project name, and the basis for project_id.
-
-    The scraper names its output CSVs by repo name only, but the caches
-    (net-vis/<key>.json, forecasts/<key>.json) and the forecaster's own cache are
-    keyed by this value, so qualifying it with the owner prevents two repos that
-    share a name but have different owners (e.g. a/frontend vs b/frontend) from
-    colliding and serving each other's stale results.
-    """
-    raw = f"{owner}_{repo}" if owner else repo
-    return "".join(c if (c.isalnum() or c in ("-", "_")) else "_" for c in raw)
-
-def generate_project_id(project_name):
-    """Generate a project_id by removing non-alphanumeric characters and lowercasing."""
-    return ''.join(c for c in project_name if c.isalnum()).lower()
 
 def fetch_project_data_from_db(project_id):
     """Retrieve processed data from MongoDB for the given project_id.
@@ -294,7 +266,7 @@ def run_pipeline(git_link, tasks="ALL", month_range="0,-1"):
         # numbering and the author names line up with the networks by
         # construction. Without this, clicking a node in the dashboard opens an
         # empty "Commit Links for <name>" dialog.
-        store_links(db, tech_csv, social_csv, project_id, project_name)
+        store_links(db, tech_csv, social_csv, project_id, project_name, git_link)
         
         # --- Step 4 - (Cache collection) Move CSV files to archive folder ---
         # try:
