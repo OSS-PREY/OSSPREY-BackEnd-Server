@@ -44,6 +44,23 @@ def ensure_oss_scraper_repo():
     
     return os.path.abspath(OSS_SCRAPER_DIR)
 
+# The miner clones each repository into a TempDir, which lands in /tmp -- the
+# root filesystem, which runs at ~95% full. Four concurrent jobs held 6.5 GB of
+# clones during a 50-repo load test and took 5 GB off the root volume in 20
+# minutes; a full queue of large repositories would exhaust it and take the host
+# down. /mnt/data1 has terabytes free, so point the miner's temp space there.
+SCRAPER_TMPDIR = os.environ.get(
+    "OSSPREY_SCRAPER_TMPDIR", "/mnt/data1/OSSPREY/.scraper-tmp")
+
+
+def scraper_env():
+    """Environment for the miner, with temp space on the big volume."""
+    env = os.environ.copy()
+    os.makedirs(SCRAPER_TMPDIR, exist_ok=True)
+    env["TMPDIR"] = SCRAPER_TMPDIR
+    return env
+
+
 def run_rust_code(git_link, function_purpose = 1): #Purpose = 1; it is being run for OSSPREY, otherwise its for other tool
     """
     Given a .git URL, this function:
@@ -119,7 +136,8 @@ def run_rust_code(git_link, function_purpose = 1): #Purpose = 1; it is being run
             cwd=scraper_dir,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
+            env=scraper_env()
         )
         logging.info("Command 1 output: " + cmd1_result.stdout)
 
@@ -137,7 +155,8 @@ def run_rust_code(git_link, function_purpose = 1): #Purpose = 1; it is being run
             cwd=scraper_dir,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
+            env=scraper_env()
         )
         logging.info("Command 2 output: " + cmd2_result.stdout)
         logging.info("Final output directory: " + os.path.abspath(output_folder))
