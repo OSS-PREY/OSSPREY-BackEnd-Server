@@ -7,6 +7,7 @@ from pymongo import MongoClient
 import logging
 from app.pipeline.orchestrator import run_pipeline
 from app.pipeline.run_pex import run_forecast
+from app.pipeline.calibration import calibrate
 from app.pipeline.rust_runner import run_rust_code
 from app.pipeline.update_pex import update_pex_generator
 from app.services.queue_manager import (
@@ -1255,6 +1256,53 @@ def get_eclipse_issue_measure(project_id, month):
         return jsonify({'error': 'Internal server error.'}), 500
 
 
+
+# Shared by both foundation grad_forecast endpoints. The forecaster saturates at
+# 1.0 for months on end, so the stored probability is re-expressed against the
+# project's own commit/issue activity before it reaches the chart; see
+# app/pipeline/calibration.py. The response shape is unchanged -- each entry
+# keeps its 'date'/'month' and 'close' keys, only 'close' moves.
+def _calibrated_forecast(forecast, tech_collection, social_collection, project_id):
+    """Return ``forecast`` with each entry's 'close' calibrated.
+
+    Best effort: if the activity data is missing or malformed the original
+    forecast is returned untouched rather than failing the request.
+    """
+    try:
+        raw = {}
+        for key, entry in forecast.items():
+            month = entry.get('date', entry.get('month')) if isinstance(entry, dict) else None
+            if month is None:
+                month = key
+            try:
+                raw[int(month)] = float(entry['close'] if isinstance(entry, dict) else entry)
+            except (TypeError, ValueError, KeyError):
+                continue
+        if not raw:
+            return forecast
+
+        tech = tech_collection.find_one({'project_id': project_id}, {'months': 1, '_id': 0}) or {}
+        social = social_collection.find_one({'project_id': project_id}, {'months': 1, '_id': 0}) or {}
+        calibrated = calibrate(raw, tech.get('months'), social.get('months'))
+
+        out = {}
+        for key, entry in forecast.items():
+            if not isinstance(entry, dict):
+                out[key] = entry
+                continue
+            month = entry.get('date', entry.get('month', key))
+            try:
+                month = int(month)
+            except (TypeError, ValueError):
+                out[key] = entry
+                continue
+            out[key] = {**entry, 'close': calibrated.get(month, entry.get('close'))}
+        return out
+    except Exception as e:
+        logger.error(f"Forecast calibration failed for '{project_id}': {e}")
+        return forecast
+
+
 # [APACHE] Fetch grad_forecast for a specific project_id
 @main_routes.route('/api/grad_forecast/<project_id>', methods=['GET'])
 @cross_origin(origin='*') 
@@ -1269,7 +1317,9 @@ def get_grad_forecast_api(project_id):
             return jsonify({'error': f"Forecast data for project '{project_id}' not found."}), 404
         
         # Return only the forecast data
-        return jsonify(project['forecast']), 200
+        return jsonify(_calibrated_forecast(
+            project['forecast'], db.tech_net, db.social_net,
+            normalized_project_id)), 200
     except Exception as e:
         logger.error(f"Error fetching forecast data for project '{project_id}': {e}")
         return jsonify({'error': 'Internal server error.'}), 500
@@ -1288,7 +1338,9 @@ def get_eclipse_grad_forecast_api(project_id):
             return jsonify({'error': f"Forecast data for project '{project_id}' not found."}), 404
         
         # Return only the forecast data
-        return jsonify(project['forecast']), 200
+        return jsonify(_calibrated_forecast(
+            project['forecast'], db.eclipse_tech_net, db.eclipse_social_net,
+            normalized_project_id)), 200
     except Exception as e:
         logger.error(f"Error fetching forecast data for project '{project_id}': {e}")
         return jsonify({'error': 'Internal server error.'}), 500
@@ -1510,6 +1562,7 @@ def repo_jobs():
             pending.append({
                 'job_id': snap['job_id'],
                 'repo_name': _repo_name_from_git_link(git_link) or git_link,
+                'git_link': git_link,
                 'status': snap['status'],
                 'created_at': snap['created_at'],
                 'estimated_seconds': snap['estimated_wait_seconds'],
