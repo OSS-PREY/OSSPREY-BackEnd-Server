@@ -44,4 +44,7 @@ def create_app():
     from app.repowise import repowise_bp
     app.register_blueprint(repowise_bp)
 
+    from app.pain_points import pain_points_bp
+    app.register_blueprint(pain_points_bp)
+
     return app
