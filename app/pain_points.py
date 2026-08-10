@@ -125,22 +125,53 @@ def _pct(value):
     return f'{round(_num(value) * 100)}%'
 
 
+# A lifetime series can run to hundreds of months. Printing every point would
+# blow the evidence budget and bury the shape; these many samples keep the
+# trajectory legible.
+TREND_SAMPLES = 8
+
+
+def _sample(points, keep):
+    """Evenly spaced points, always including the first and the last."""
+    if len(points) <= keep:
+        return points
+
+    step = (len(points) - 1) / (keep - 1)
+
+    return [points[round(i * step)] for i in range(keep)]
+
+
 def _trend_line(label, series):
-    """"devs: m9=31, m10=24, m11=19, m12=14 (down 55%)"."""
-    points = [p for p in (series or []) if isinstance(p, dict)][-6:]
+    """"devs: m0=4, m45=31, m90=14 (peak 31 at m45; down 55% overall)".
+
+    Renders the whole span rather than the tail: pain points ask what is wrong
+    with the project, so the trajectory from its beginning is the evidence.
+    """
+    points = [p for p in (series or []) if isinstance(p, dict)]
     if not points:
         return None
 
+    shown = _sample(points, TREND_SAMPLES)
     rendered = ', '.join(
-        f"m{p.get('month')}={round(_num(p.get('value')), 3):g}" for p in points)
+        f"m{p.get('month')}={round(_num(p.get('value')), 3):g}" for p in shown)
+
+    notes = []
+    if len(points) > 2:
+        peak = max(points, key=lambda p: _num(p.get('value')))
+        # Only worth saying when the high point is not simply where it ends.
+        if peak is not points[-1] and _num(peak.get('value')) > _num(points[-1].get('value')):
+            notes.append(
+                f"peak {round(_num(peak.get('value')), 3):g} at m{peak.get('month')}")
 
     first, last = _num(points[0].get('value')), _num(points[-1].get('value'))
     if first > 0 and len(points) > 1:
         change = (last - first) / first
-        direction = 'down' if change < 0 else 'up'
-        rendered += f' ({direction} {abs(round(change * 100))}% across the window)'
+        notes.append(f"{'down' if change < 0 else 'up'} {abs(round(change * 100))}% overall")
 
-    return f'{label}: {rendered}'
+    if len(points) > TREND_SAMPLES:
+        rendered = rendered.replace(', ', ' ... ', 1)
+
+    return f'{label}: {rendered}' + (f' ({"; ".join(notes)})' if notes else '')
 
 
 def build_evidence(digest, project_name):
@@ -151,6 +182,14 @@ def build_evidence(digest, project_name):
     """
     digest = digest if isinstance(digest, dict) else {}
     lines = [f'PROJECT: {project_name}']
+
+    lifetime = digest.get('span') == 'all'
+    if lifetime:
+        covered = int(_num(digest.get('months_covered')))
+        lines.append(f'SPAN: the project\'s entire recorded history'
+                     + (f', {covered} months' if covered else ''))
+    elif digest.get('month') is not None:
+        lines.append(f"SPAN: month {digest.get('month')}")
 
     meta = digest.get('metadata') or {}
     if isinstance(meta, dict) and meta:
@@ -188,7 +227,7 @@ def build_evidence(digest, project_name):
         if tech.get('top_contributor_share') is not None:
             block.append(
                 f"  busiest developer accounts for {_pct(tech['top_contributor_share'])}"
-                ' of file changes this month')
+                ' of all file changes' + (' across the project' if lifetime else ' this month'))
         if tech.get('top_two_share') is not None:
             block.append(
                 f"  top two developers together account for {_pct(tech['top_two_share'])}")
@@ -196,7 +235,7 @@ def build_evidence(digest, project_name):
         if solo.get('total'):
             block.append(
                 f"  {int(_num(solo.get('count')))} of {int(_num(solo['total']))} files"
-                ' this month were touched by only one developer')
+                ' were touched by only one developer' + ('' if lifetime else ' this month'))
         if len(block) > 1:
             lines.extend(block)
 
@@ -211,15 +250,16 @@ def build_evidence(digest, project_name):
         if social.get('top_responder_share') is not None:
             block.append(
                 f"  busiest participant accounts for {_pct(social['top_responder_share'])}"
-                ' of all discussion this month')
+                ' of all discussion' + ('' if lifetime else ' this month'))
         silent = social.get('silent_developers') or {}
         if silent.get('total'):
             block.append(
                 f"  silent committers: {int(_num(silent.get('count')))}"
-                f" of the {int(_num(silent['total']))} developers who committed this"
-                ' month wrote nothing in any discussion')
+                f" of the {int(_num(silent['total']))} developers who committed"
+                ' wrote nothing in any discussion')
         if social.get('empty'):
-            block.append('  no discussion activity was recorded this month at all')
+            block.append('  no discussion activity was recorded'
+                         + ('' if lifetime else ' this month') + ' at all')
         if len(block) > 1:
             lines.extend(block)
 
