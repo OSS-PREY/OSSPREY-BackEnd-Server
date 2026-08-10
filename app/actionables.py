@@ -27,6 +27,7 @@ from app.pain_points import (
     CONNECT_TIMEOUT, OLLAMA_URL, RepoWiseUnavailable, _generate, _num,
     build_evidence, fetch_documents, missing_documents,
 )
+from app.inference_queue import InferenceBusy, gpu_slot
 from app.repowise import project_id_from_github_url
 
 logger = logging.getLogger(__name__)
@@ -185,10 +186,11 @@ def _falling(series):
 def embed(texts):
     """Both query vectors in one call -- the endpoint accepts a list."""
     try:
-        response = requests.post(
-            f'{OLLAMA_URL}/api/embed',
-            json={'model': EMBED_MODEL, 'input': texts},
-            timeout=(CONNECT_TIMEOUT, EMBED_TIMEOUT))
+        with gpu_slot('actionables-embed'):
+            response = requests.post(
+                f'{OLLAMA_URL}/api/embed',
+                json={'model': EMBED_MODEL, 'input': texts},
+                timeout=(CONNECT_TIMEOUT, EMBED_TIMEOUT))
         response.raise_for_status()
         vectors = response.json().get('embeddings') or []
     except (requests.RequestException, ValueError) as e:
@@ -329,6 +331,12 @@ def as_payload(index_ids, catalog, reasons=None):
     return out
 
 
+@actionables_bp.errorhandler(InferenceBusy)
+def _handle_busy(_e):
+    return jsonify({'message': 'The analysis service is busy right now.'
+                              ' Please try again in a moment.'}), 503
+
+
 @actionables_bp.errorhandler(RepoWiseUnavailable)
 def _handle_unavailable(_e):
     return jsonify({'message': 'Actionable selection is temporarily unavailable.'}), 503
@@ -355,7 +363,8 @@ def actionables():
     # an unnamed project defaults to "this project", so two different repos
     # would have shared a cache entry.
     identity = project_id or payload.get('github_url')
-    key = f"{identity}::{digest.get('month')}" if identity else None
+    key = (f"{identity}::{digest.get('span', 'window')}::{digest.get('month')}"
+           if identity else None)
     if key and not payload.get('refresh') and key in _cache:
         return jsonify(_cache[key]), 200
 

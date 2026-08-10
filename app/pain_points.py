@@ -25,6 +25,7 @@ import requests
 from flask import Blueprint, jsonify, request
 from flask_cors import cross_origin
 
+from app.inference_queue import InferenceBusy, gpu_slot
 from app.repowise import RepoWiseUnavailable, project_id_from_github_url
 
 logger = logging.getLogger(__name__)
@@ -372,8 +373,11 @@ def _generate(prompt):
         payload['think'] = OLLAMA_THINK.strip().lower() == 'true'
 
     try:
-        response = requests.post(f'{OLLAMA_URL}/api/generate', json=payload,
-                                 timeout=(CONNECT_TIMEOUT, GENERATE_TIMEOUT))
+        # One request at a time: two dashboards loading together otherwise put
+        # two generations on the same card and both get slower.
+        with gpu_slot('pain-points'):
+            response = requests.post(f'{OLLAMA_URL}/api/generate', json=payload,
+                                     timeout=(CONNECT_TIMEOUT, GENERATE_TIMEOUT))
     except requests.RequestException as e:
         logger.error(f'Pain points: LLM call failed: {e}')
         raise RepoWiseUnavailable(str(e))
@@ -403,6 +407,12 @@ def to_bullets(text):
                 bullets.append('- ' + body)
 
     return bullets[:MAX_BULLETS]
+
+
+@pain_points_bp.errorhandler(InferenceBusy)
+def _handle_busy(_e):
+    return jsonify({'message': 'The analysis service is busy right now.'
+                              ' Please try again in a moment.'}), 503
 
 
 @pain_points_bp.errorhandler(RepoWiseUnavailable)
