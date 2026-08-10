@@ -85,3 +85,5 @@ data/new/
 data/
 .DS_store
 out/*
+# Build artifact: rebuild with scripts/build_actionable_index.py
+data/actionables_index.npz

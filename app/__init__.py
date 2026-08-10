@@ -47,4 +47,7 @@ def create_app():
     from app.pain_points import pain_points_bp
     app.register_blueprint(pain_points_bp)
 
+    from app.actionables import actionables_bp
+    app.register_blueprint(actionables_bp)
+
     return app
