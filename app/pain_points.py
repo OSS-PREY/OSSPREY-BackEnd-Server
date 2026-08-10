@@ -35,6 +35,12 @@ REPOWISE_URL = os.environ.get('REPOWISE_BASE_URL', 'http://localhost:8000').rstr
 OLLAMA_URL = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/')
 OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'mistral:latest')
 
+# Reasoning models (gemma4, qwen3) think by default, and Ollama routes that into
+# a separate field -- gemma4:12b spent all 700 tokens there and returned an empty
+# response. Set OLLAMA_THINK=false for those; leave it unset for mistral, whose
+# older Ollama build has no such parameter.
+OLLAMA_THINK = os.environ.get('OLLAMA_THINK')
+
 CONNECT_TIMEOUT = 5
 SEARCH_TIMEOUT = 30
 GENERATE_TIMEOUT = 300      # Mistral on CPU takes minutes for a 700-token answer.
@@ -316,16 +322,18 @@ Pain points:"""
 
 
 def _generate(prompt):
+    payload = {
+        'model': OLLAMA_MODEL,
+        'prompt': prompt,
+        'stream': False,
+        'options': {'temperature': 0.2, 'num_predict': 700, 'top_p': 0.9},
+    }
+    if OLLAMA_THINK is not None:
+        payload['think'] = OLLAMA_THINK.strip().lower() == 'true'
+
     try:
-        response = requests.post(
-            f'{OLLAMA_URL}/api/generate',
-            json={
-                'model': OLLAMA_MODEL,
-                'prompt': prompt,
-                'stream': False,
-                'options': {'temperature': 0.2, 'num_predict': 700, 'top_p': 0.9},
-            },
-            timeout=(CONNECT_TIMEOUT, GENERATE_TIMEOUT))
+        response = requests.post(f'{OLLAMA_URL}/api/generate', json=payload,
+                                 timeout=(CONNECT_TIMEOUT, GENERATE_TIMEOUT))
     except requests.RequestException as e:
         logger.error(f'Pain points: LLM call failed: {e}')
         raise RepoWiseUnavailable(str(e))
