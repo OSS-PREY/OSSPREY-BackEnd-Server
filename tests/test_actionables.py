@@ -11,7 +11,8 @@ import numpy as np
 import pytest
 from flask import Flask
 
-from app.actionables import (
+from app.actionables import (  # noqa: I001
+    _restates,
     BOOST_CAP, CATEGORIES, CICD, COMMUNITY, DOCS, GOVERNANCE, ONBOARDING,
     SECURITY, STANDARDS, TESTING, actionables_bp, build_profile, parse_choices,
     wanted_categories,
@@ -209,3 +210,49 @@ class TestRoute:
             response = client.post('/api/actionables', json={'digest': DIGEST})
 
         assert response.status_code == 503
+
+
+class TestRestatedReasons:
+    """The prompt has forbidden restating the recommendation since the first
+    version and the model still does it: on org.eclipse.modisco three of five
+    reasons were the title copied verbatim. A rule the model ignores has to be
+    enforced in code."""
+
+    def test_catches_a_verbatim_copy(self):
+        title = 'Use Decca to detect and assess dependency conflict issues in Java projects.'
+
+        assert _restates(title, title.rstrip('.'))
+
+    def test_lets_a_real_reason_through(self):
+        assert not _restates(
+            'Design and implement incentives for second focal developers',
+            'Two developers make 60% of all changes, so a bus factor of two is the risk')
+
+    def test_lets_a_domain_reason_through(self):
+        assert not _restates(
+            'Adopt file-level regression test selection tools',
+            'A hardware simulator regression suite runs for hours here')
+
+    def test_tolerates_an_echo_that_still_carries_evidence(self):
+        # Opens with the title but pivots to a real figure: weak, not useless.
+        assert not _restates(
+            'Monitor contributor metrics in advance to detect signs of attrition',
+            'Monitor contributor metrics because active developers dropped by 86%')
+
+    def test_ignores_a_reason_too_short_to_judge(self):
+        assert not _restates('Adopt contributing guidelines', 'Needed here')
+
+    def test_drops_the_reason_but_keeps_the_recommendation(self):
+        catalog = [{'title': 'Use Decca to detect dependency conflicts in Java projects'}]
+        chosen = parse_choices('[0] Use Decca to detect dependency conflicts in Java projects',
+                               {0}, catalog)
+
+        # Retrieval and the rerank both still picked it; showing no reason is
+        # more honest than showing a fake one.
+        assert chosen == [(0, '')]
+
+    def test_keeps_a_good_reason(self):
+        catalog = [{'title': 'Design incentives for second focal developers'}]
+        chosen = parse_choices('[0] Two developers make 60% of all changes here', {0}, catalog)
+
+        assert chosen == [(0, 'Two developers make 60% of all changes here')]

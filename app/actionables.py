@@ -293,6 +293,8 @@ would be false of most others.
 - Every reason must contain a specific figure from the evidence, or a concrete
   fact about what this project is -- what it builds, what it is written in and
   what that implies. Never invent either.
+- Never argue from a figure the evidence marks "normal, not a concern". A low
+  number is not evidence that something needs fixing.
 - "because the project is written in Python" is not a reason; every Python
   project would match it. "the Cython extensions mean contributors need a build
   toolchain before their first change" is a reason.
@@ -320,8 +322,28 @@ Choices:"""
 _CHOICE = re.compile(r'^\D{0,3}\[?(\d+)\]?[\s:.)-]+(?P<why>.+)$')
 
 
-def parse_choices(text, allowed):
-    """Ids the model picked, with its reason, dropping anything it invented."""
+def _restates(title, why):
+    """Is the reason just the recommendation, said again?
+
+    Measured on the opening words rather than the whole sentence: the usual
+    shape is the title verbatim followed by "because <number>", which is a
+    restatement wearing a statistic as a hat.
+    """
+    words = set(re.findall(r'[a-z]{4,}', (title or '').lower()))
+    lead = re.findall(r'[a-z]{4,}', (why or '').lower())[:8]
+    if not words or len(lead) < 4:
+        return False
+
+    return sum(1 for w in lead if w in words) / len(lead) >= 0.7
+
+
+def parse_choices(text, allowed, catalog=None):
+    """Ids the model picked, with its reason, dropping anything it invented.
+
+    A reason that merely restates the recommendation is dropped while the
+    recommendation is kept: retrieval and the rerank both still chose it, and
+    showing no reason is more honest than showing a fake one.
+    """
     chosen, seen = [], set()
     for line in (text or '').splitlines():
         match = _CHOICE.match(line.strip())
@@ -332,6 +354,10 @@ def parse_choices(text, allowed):
         why = match.group('why').strip(' -.')
         if index in allowed and index not in seen and why:
             seen.add(index)
+            title = (catalog[index].get('title') if catalog and index < len(catalog) else '')
+            if _restates(title, why):
+                logger.info(f'actionables: dropped a restated reason for [{index}]')
+                why = ''
             chosen.append((index, why))
 
     return chosen[:FINAL]
@@ -342,7 +368,7 @@ def as_payload(index_ids, catalog, reasons=None):
     for i in index_ids:
         entry = dict(catalog[i])
         entry['catalog_index'] = i
-        if reasons and i in reasons:
+        if reasons and reasons.get(i):
             entry['why'] = reasons[i]
         out.append(entry)
 
@@ -417,7 +443,7 @@ def actionables():
 
     try:
         answer = _generate(build_prompt(profile, shortlist, catalog))
-        chosen = parse_choices(answer, {i for i, _ in shortlist})
+        chosen = parse_choices(answer, {i for i, _ in shortlist}, catalog)
     except RepoWiseUnavailable:
         # Retrieval already produced a project-specific order; returning it
         # beats returning the importance sort the panel had before.
