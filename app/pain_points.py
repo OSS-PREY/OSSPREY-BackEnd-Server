@@ -307,11 +307,17 @@ def build_evidence(digest, project_name):
             block.append(
                 f"  top two developers together account for {_pct(tech['top_two_share'])}"
                 + _reading(tech['top_two_share'], 0.45, 0.20))
-        solo = tech.get('solo_files') or {}
+        solo = tech.get('solo_file_types') or {}
         if solo.get('total'):
+            # Without a reading the model argued backwards from it: "because
+            # only 2 of 20 were touched by a single developer, tag issues with
+            # required skills" -- a low ratio used to argue FOR the advice.
             block.append(
-                f"  {int(_num(solo.get('count')))} of {int(_num(solo['total']))} files"
-                ' were touched by only one developer' + ('' if lifetime else ' this month'))
+                f"  {int(_num(solo.get('count')))} of {int(_num(solo['total']))}"
+                ' file types are worked on by only one developer'
+                + ('' if lifetime else ' this month')
+                + _reading(_num(solo.get('count')) / max(_num(solo['total']), 1),
+                           0.50, 0.20))
         if len(block) > 1:
             lines.extend(block)
 

@@ -23,7 +23,7 @@ DIGEST = {
     'technical': {
         'series': {'developers': [{'month': 9, 'value': 31}, {'month': 12, 'value': 14}]},
         'top_contributor_share': 0.38,
-        'solo_files': {'count': 212, 'total': 340},
+        'solo_file_types': {'count': 212, 'total': 340},
     },
     'social': {
         'series': {'participants': [{'month': 9, 'value': 22}, {'month': 12, 'value': 8}]},

@@ -142,7 +142,8 @@ def wanted_categories(digest, missing_docs, has_ci):
         wanted.add(CICD)
 
     tech = _section(digest, 'technical')
-    solo = tech.get('solo_files') if isinstance(tech.get('solo_files'), dict) else {}
+    solo = (tech.get('solo_file_types')
+            if isinstance(tech.get('solo_file_types'), dict) else {})
     if _num(solo.get('total')) and _num(solo.get('count')) / _num(solo['total']) > 0.5:
         wanted.add(STANDARDS)
     if _num(tech.get('top_contributor_share')) > 0.35:

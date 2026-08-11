@@ -27,7 +27,7 @@ DIGEST = {
     'technical': {
         'series': {'developers': [{'month': 10, 'value': 24}, {'month': 12, 'value': 14}]},
         'top_contributor_share': 0.38,
-        'solo_files': {'count': 212, 'total': 340},
+        'solo_file_types': {'count': 212, 'total': 340},
     },
     'social': {
         'series': {'participants': [{'month': 10, 'value': 17}, {'month': 12, 'value': 8}]},
@@ -43,7 +43,7 @@ class TestEvidence:
         assert 'gem5' in text
         assert 'm12=0.41' in text
         assert '38%' in text
-        assert '212 of 340' in text
+        assert '212 of 340 file types' in text
         assert 'silent committers: 9 of the 14' in text
 
     def test_states_the_direction_of_travel(self):
@@ -54,7 +54,7 @@ class TestEvidence:
         # The digest is built in the browser, so it is untrusted input.
         junk = {
             'forecast': {'series': ['not a dict', None], 'latest': 'NaN'},
-            'technical': {'series': {'developers': None}, 'solo_files': {'total': 'x'}},
+            'technical': {'series': {'developers': None}, 'solo_file_types': {'total': 'x'}},
             'social': 'not a dict',
         }
 
