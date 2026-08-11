@@ -126,6 +126,22 @@ def _pct(value):
     return f'{round(_num(value) * 100)}%'
 
 
+def _reading(value, high, low=None):
+    """How a share should be read, so the model does not invent a problem.
+
+    kubernetes' busiest developer holds 4% of the work and came back as "high
+    concentration of work among a few accounts". Numbers alone do not tell it
+    which direction is bad.
+    """
+    share = _num(value)
+    if share >= high:
+        return ' -- high'
+    if low is not None and share <= low:
+        return ' -- normal, not a concern'
+
+    return ' -- moderate'
+
+
 # A lifetime series can run to hundreds of months. Printing every point would
 # blow the evidence budget and bury the shape; these many samples keep the
 # trajectory legible.
@@ -168,6 +184,17 @@ def _trend_line(label, series):
     if first > 0 and len(points) > 1:
         change = (last - first) / first
         notes.append(f"{'down' if change < 0 else 'up'} {abs(round(change * 100))}% overall")
+
+    # Lifetime change alone is misleading: any mature project is "up" against
+    # its first month, however badly it is doing now.
+    recent = points[-12:]
+    if len(recent) > 2:
+        base = _num(recent[0].get('value'))
+        if base > 0:
+            shift = (_num(recent[-1].get('value')) - base) / base
+            if abs(shift) >= 0.15:
+                notes.append(f"{'down' if shift < 0 else 'up'} {abs(round(shift * 100))}%"
+                             ' over the last 12 months')
 
     if len(points) > TREND_SAMPLES:
         rendered = rendered.replace(', ', ' ... ', 1)
@@ -228,10 +255,13 @@ def build_evidence(digest, project_name):
         if tech.get('top_contributor_share') is not None:
             block.append(
                 f"  busiest developer accounts for {_pct(tech['top_contributor_share'])}"
-                ' of all file changes' + (' across the project' if lifetime else ' this month'))
+                ' of all file changes'
+                + (' across the project' if lifetime else ' this month')
+                + _reading(tech['top_contributor_share'], 0.30, 0.10))
         if tech.get('top_two_share') is not None:
             block.append(
-                f"  top two developers together account for {_pct(tech['top_two_share'])}")
+                f"  top two developers together account for {_pct(tech['top_two_share'])}"
+                + _reading(tech['top_two_share'], 0.45, 0.20))
         solo = tech.get('solo_files') or {}
         if solo.get('total'):
             block.append(
@@ -257,7 +287,9 @@ def build_evidence(digest, project_name):
             block.append(
                 f"  silent committers: {int(_num(silent.get('count')))}"
                 f" of the {int(_num(silent['total']))} developers who committed"
-                ' wrote nothing in any discussion')
+                ' wrote nothing in any discussion'
+                + _reading(_num(silent.get('count')) / max(_num(silent['total']), 1),
+                           0.60, 0.25))
         if social.get('empty'):
             block.append('  no discussion activity was recorded'
                          + ('' if lifetime else ' this month') + ' at all')
@@ -352,7 +384,8 @@ RULES
   "may cause" -- if the harm is speculation, the bullet does not belong.
 - Order the bullets most urgent first.
 - If a signal looks healthy, say nothing about it. Silence is the correct output
-  for a project with no problems.
+  for a project with no problems. Where the evidence marks a figure "normal, not
+  a concern", it is not a pain point -- do not report it as one.
 
 EVIDENCE FROM THE OSSPREY PIPELINE
 {evidence}
@@ -403,6 +436,10 @@ def to_bullets(text):
         match = _BULLET.match(line.strip())
         if match and match.group('body').strip():
             body = re.sub(r'[*_' + chr(96) + ']{1,2}', '', match.group('body')).strip()
+            # The evidence tags shares as "-- high" / "-- normal, not a concern"
+            # so the model can tell which direction is bad; gem5 quoted the tag
+            # straight into a bullet. It is scaffolding, not prose.
+            body = re.sub(r'\s*--\s*(high|moderate|normal, not a concern)\b', '', body).strip(' ;,')
             if body:
                 bullets.append('- ' + body)
 

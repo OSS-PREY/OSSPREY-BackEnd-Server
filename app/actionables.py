@@ -279,16 +279,33 @@ recommendations drawn from a research catalogue. Choose the ones that genuinely
 fit THIS project and would help it now.
 
 RULES
-- Reply with one line per choice, in the form: [id] one sentence on why it fits
-  THIS project.
+- Reply with one line per choice, in the form: [id] why it fits THIS project.
 - Choose at most {FINAL}. Choose FEWER if fewer genuinely fit -- do not pad.
 - Reject anything aimed at a different technology, language or research area
   than this project uses. A recommendation about a tool for a language this
   project does not use is wrong however good it sounds.
-- The reason must refer to something in the project evidence -- a number, a
-  missing document, a language. Never invent facts, never write a URL.
-- Do not restate the recommendation as the reason.
-- Output nothing else: no preamble, no heading, no closing summary.
+
+THE REASON IS THE HARD PART. It must say something about THIS project that
+would be false of most others.
+- START with the project's own evidence, never with the recommendation's words.
+  If your sentence begins by repeating the title, delete it and start again.
+- Every reason must contain a specific figure from the evidence, or a concrete
+  fact about what this project is -- what it builds, what it is written in and
+  what that implies. Never invent either.
+- "because the project is written in Python" is not a reason; every Python
+  project would match it. "the Cython extensions mean contributors need a build
+  toolchain before their first change" is a reason.
+- One sentence, under 25 words. No preamble, no heading, no summary, no URLs.
+
+GOOD:  [12] Two developers make 60% of all changes, so a bus factor of two is
+       the project's sharpest risk.
+GOOD:  [7] A hardware simulator's regression suite runs for hours, which is why
+       test selection matters more here than in a typical library.
+BAD:   [12] Adopt network-based operationalizations for classifying core and
+       peripheral developers, because 60% of changes come from two people.
+       (restates the title)
+BAD:   [7] This is relevant because the project is written in C++.
+       (true of thousands of projects)
 
 PROJECT EVIDENCE
 {profile}
