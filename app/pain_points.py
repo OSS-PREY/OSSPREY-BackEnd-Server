@@ -158,6 +158,32 @@ def _sample(points, keep):
     return [points[round(i * step)] for i in range(keep)]
 
 
+def _is_partial(points):
+    """Does the last point look like a month the scrape caught partway through?
+
+    A final month well below the year before it is usually the crawl stopping
+    mid-month, not the project emptying out: django ends on 6 developers
+    against a median of 30 for the twelve months before, all of them flat.
+
+    The point is real data and is never removed -- callers mark it and measure
+    the trend without it, so a genuine last-month fall is still visible and a
+    partial one stops being read as a collapse.
+    """
+    prior = [_num(p.get('value')) for p in points[-13:-1]]
+    if len(prior) < 6:
+        return False
+
+    typical = sorted(prior)[len(prior) // 2]
+    if typical <= 0 or _num(points[-1].get('value')) >= typical * 0.5:
+        return False
+
+    # The drop must break a settled run. A project already declining steadily
+    # ends every month below its own twelve-month median, so the size of the
+    # last step cannot distinguish the two on its own -- and calling a genuine
+    # collapse "a partial month" would bury the finding that matters most.
+    return abs(prior[-1] - prior[0]) / typical < 0.5
+
+
 def _trend_line(label, series):
     """"devs: m0=4, m45=31, m90=14 (peak 31 at m45; down 55% overall)".
 
@@ -168,26 +194,39 @@ def _trend_line(label, series):
     if not points:
         return None
 
-    shown = _sample(points, TREND_SAMPLES)
+    partial = _is_partial(points)
+
+    # Statistics come from the settled months. Leaving a partial final month in
+    # made django read "down 81% over the last 12 months" across a year that
+    # was flat at ~30 developers.
+    stats = points[:-1] if partial and len(points) > 2 else points
+
+    # The incomplete month is kept out of the trend line, not out of the
+    # evidence. Left in the series -- even tagged "(part-month)" -- kubernetes
+    # still quoted "m125=101, m146=3" as a drop; sitting at the end of a run of
+    # numbers, it reads as the trend's conclusion whatever the label says. It
+    # is reported on its own line below instead, so the figure is still there
+    # to see but has nothing to be compared against.
     rendered = ', '.join(
-        f"m{p.get('month')}={round(_num(p.get('value')), 3):g}" for p in shown)
+        f"m{p.get('month')}={round(_num(p.get('value')), 3):g}"
+        for p in _sample(stats, TREND_SAMPLES))
 
     notes = []
-    if len(points) > 2:
-        peak = max(points, key=lambda p: _num(p.get('value')))
+    if len(stats) > 2:
+        peak = max(stats, key=lambda p: _num(p.get('value')))
         # Only worth saying when the high point is not simply where it ends.
-        if peak is not points[-1] and _num(peak.get('value')) > _num(points[-1].get('value')):
+        if peak is not stats[-1] and _num(peak.get('value')) > _num(stats[-1].get('value')):
             notes.append(
                 f"peak {round(_num(peak.get('value')), 3):g} at m{peak.get('month')}")
 
-    first, last = _num(points[0].get('value')), _num(points[-1].get('value'))
-    if first > 0 and len(points) > 1:
+    first, last = _num(stats[0].get('value')), _num(stats[-1].get('value'))
+    if first > 0 and len(stats) > 1:
         change = (last - first) / first
         notes.append(f"{'down' if change < 0 else 'up'} {abs(round(change * 100))}% overall")
 
     # Lifetime change alone is misleading: any mature project is "up" against
     # its first month, however badly it is doing now.
-    recent = points[-12:]
+    recent = stats[-12:]
     if len(recent) > 2:
         base = _num(recent[0].get('value'))
         if base > 0:
@@ -196,7 +235,13 @@ def _trend_line(label, series):
                 notes.append(f"{'down' if shift < 0 else 'up'} {abs(round(shift * 100))}%"
                              ' over the last 12 months')
 
-    if len(points) > TREND_SAMPLES:
+    if partial:
+        tail = points[-1]
+        notes.append(
+            f"m{tail.get('month')} is still in progress and shows"
+            f" {round(_num(tail.get('value')), 3):g} so far, which is not a fall")
+
+    if len(stats) > TREND_SAMPLES:
         rendered = rendered.replace(', ', ' ... ', 1)
 
     return f'{label}: {rendered}' + (f' ({"; ".join(notes)})' if notes else '')
@@ -282,8 +327,17 @@ def build_evidence(digest, project_name):
             block.append(
                 f"  busiest participant accounts for {_pct(social['top_responder_share'])}"
                 ' of all discussion' + ('' if lifetime else ' this month'))
+        # With no discussion data at all, "every committer was silent" is true by
+        # construction and says nothing about the project -- kubernetes and
+        # django both reported 100% silent committers because their issue
+        # scrape returned nothing. Absence of data gets reported as absence of
+        # data instead.
+        participants = (social.get('series') or {}).get('participants') or []
+        no_discussion = bool(social.get('empty')) or (
+            bool(participants) and all(_num(p.get('value')) == 0 for p in participants))
+
         silent = social.get('silent_developers') or {}
-        if silent.get('total'):
+        if silent.get('total') and not no_discussion:
             block.append(
                 f"  silent committers: {int(_num(silent.get('count')))}"
                 f" of the {int(_num(silent['total']))} developers who committed"
@@ -293,6 +347,9 @@ def build_evidence(digest, project_name):
         if social.get('empty'):
             block.append('  no discussion activity was recorded'
                          + ('' if lifetime else ' this month') + ' at all')
+        elif no_discussion:
+            block.append('  no discussion data was collected for this project, so'
+                         ' nothing can be said about how its contributors communicate')
         if len(block) > 1:
             lines.extend(block)
 
@@ -383,6 +440,8 @@ RULES
 - State only what the evidence shows. No "could lead to", "potentially",
   "may cause" -- if the harm is speculation, the bullet does not belong.
 - Order the bullets most urgent first.
+- Where the evidence says a final month may be partial, do not call it a
+  decline. Judge the trend on the months before it.
 - If a signal looks healthy, say nothing about it. Silence is the correct output
   for a project with no problems. Where the evidence marks a figure "normal, not
   a concern", it is not a pain point -- do not report it as one.

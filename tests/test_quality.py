@@ -3,7 +3,7 @@
 Eight real projects went through both endpoints; these cover the four defects
 that showed up in the output.
 """
-from app.pain_points import _reading, _trend_line, to_bullets
+from app.pain_points import _reading, _trend_line, build_evidence, to_bullets
 
 
 class TestReading:
@@ -64,3 +64,65 @@ class TestBullets:
         out = to_bullets('- Contributors fell 31 -> 14 -- and none joined')
 
         assert out == ['- Contributors fell 31 -> 14 -- and none joined']
+
+
+class TestPartialFinalMonth:
+    """A scrape usually catches its last month partway through. django ends on
+    6 developers against a median of 30 for the year before, all flat, and that
+    was read as "sharp decline in active developers".
+
+    The figure is real data and is never removed -- it is stated on its own,
+    and the trend is measured without it.
+    """
+
+    FLAT_THEN_PART = ([{'month': m, 'value': 30} for m in range(24)]
+                      + [{'month': 24, 'value': 6}])
+
+    def test_keeps_the_month_but_states_it_apart(self):
+        line = _trend_line('devs', self.FLAT_THEN_PART)
+
+        # Still visible...
+        assert 'm24 is still in progress and shows 6 so far' in line
+        # ...but not sitting at the end of the run of numbers, where it reads
+        # as the trend's conclusion whatever label it carries.
+        assert 'm24=6' not in line
+
+    def test_does_not_call_a_flat_year_a_collapse(self):
+        assert 'down' not in _trend_line('devs', self.FLAT_THEN_PART)
+
+    def test_a_real_fall_still_shows(self):
+        # A genuine decline over the year is not hidden by this.
+        falling = [{'month': m, 'value': max(2, 40 - m * 2)} for m in range(20)]
+        line = _trend_line('devs', falling)
+
+        assert 'down' in line
+        assert 'still in progress' not in line
+
+    def test_needs_enough_history_to_judge(self):
+        # Three months is not enough to call the last one partial.
+        short = [{'month': 0, 'value': 30}, {'month': 1, 'value': 30}, {'month': 2, 'value': 4}]
+
+        assert 'still in progress' not in _trend_line('devs', short)
+
+
+class TestNoDiscussionData:
+    """"Every committer was silent" is true by construction when the issue
+    scrape returned nothing; kubernetes and django both reported 100% silent
+    committers for that reason alone."""
+
+    NONE = {'span': 'all', 'social': {
+        'series': {'participants': [{'month': m, 'value': 0} for m in range(6)]},
+        'silent_developers': {'count': 4760, 'total': 4760}}}
+
+    SOME = {'span': 'all', 'social': {
+        'series': {'participants': [{'month': m, 'value': 20} for m in range(6)]},
+        'silent_developers': {'count': 560, 'total': 828}}}
+
+    def test_suppresses_the_vacuous_finding(self):
+        evidence = build_evidence(self.NONE, 'kubernetes')
+
+        assert 'silent committers' not in evidence
+        assert 'no discussion' in evidence
+
+    def test_keeps_it_when_there_is_discussion_to_be_absent_from(self):
+        assert 'silent committers: 560' in build_evidence(self.SOME, 'redis')
