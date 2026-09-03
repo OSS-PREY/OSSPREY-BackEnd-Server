@@ -346,6 +346,83 @@ POST /api/cancel_job/<job_id>
 - **Response**: `200 OK` with the updated snapshot, or `404` if the job id is
   unknown.
 
+### Pain Point Analysis (LLM-backed)
+
+```bash
+POST /api/pain-points
+```
+
+**Request Body**
+
+```json
+{
+  "github_url": "https://github.com/owner/repo",
+  "project_name": "repo",
+  "digest": { "span": "all", "metadata": {}, "technical": {}, "social": {} },
+  "refresh": false
+}
+```
+
+- **Description**: Renders the client-built `digest` (forecast, technical and
+  social networks, repository metadata) as plain-text evidence, retrieves the
+  project's governance documents from RepoWise, and asks the LLM what is going
+  wrong right now. `github_url` (or `project_id`) is optional — Apache and
+  Eclipse projects carry no GitHub URL and are analysed from the metrics alone.
+- **Response**: `200 OK` with `pain_points` (markdown bullets), `sources`, and
+  `documents_used`. Returns `400` when the digest is missing and `503` when the
+  analysis service is busy or unavailable.
+
+### Actionable Recommendations (LLM-backed)
+
+```bash
+POST /api/actionables
+```
+
+**Request Body**: same shape as `/api/pain-points`, plus optional
+`description` and `has_ci`.
+
+- **Description**: Picks the recommendations that fit this project from the
+  research catalogue. The catalogue is embedded offline
+  (`scripts/build_actionable_index.py`), so a request costs one embedding call
+  plus one rerank call rather than one model call per catalogue entry. If the
+  rerank is unavailable, the retrieval order is returned instead
+  (`reranked: false`).
+- **Response**: `200 OK` with `actionables`, `categories`, `shortlist_size`,
+  and `sources`. Returns `503` when the actionable index has not been built.
+
+#### Answer caching
+
+Both endpoints are cached in a content-addressed SQLite store
+(`app/answercache.py`, database at `data/answer_cache.db`, overridable with the
+`OSSPREY_ANSWER_CACHE` environment variable). The cache key is the SHA-256 of
+whatever fully determines the answer: for pain points the fully rendered prompt
+(which folds in the project name, digest, documents and missing-documents list)
+plus the model name; for actionables the retrieval profile, the wanted
+categories, and both model names. Any change to the inputs produces a new key,
+so there is **no TTL** — stale entries are simply never served. Cache hits
+return the stored payload with `cached: true` added. Sending `"refresh": true`
+bypasses the read but still writes the fresh answer. Only successful answers
+are cached; failures and empty results leave no entry. Because gunicorn runs
+with `reload = True`, an in-memory cache would be wiped on every deploy — the
+on-disk store survives worker restarts.
+
+#### Context window
+
+Generation runs with `num_ctx: 8192`. Before sending, the prompt size is
+estimated (`len // 4` tokens) and, if it would exceed the window minus the
+output budget, the governance-document excerpts — the least load-bearing part
+of the prompt — are trimmed with a note, rather than letting Ollama silently
+shift the oldest tokens (the rules, which sit at the head of the prompt) out of
+the context. The pain-points prompt is ordered rules-first so its fixed prefix
+is byte-for-byte identical across projects.
+
+#### Ollama residency
+
+The user-local Ollama service (`~/.config/systemd/user/ollama-local.service`,
+port 11435) sets `OLLAMA_KEEP_ALIVE=4h`, keeping the model resident in VRAM
+across the bursty analysis pattern instead of reloading 8 GB off disk after
+each idle gap.
+
 ### List Registered Users
 
 ```bash
