@@ -254,7 +254,10 @@ def run_rust_code(git_link, function_purpose = 1): #Purpose = 1; it is being run
         logging.info("Command 2 output: " + cmd2_result.stdout)
         logging.info("Final output directory: " + os.path.abspath(output_folder))
 
-        git_project_cropped_name = "/mnt/data1/OSPEX/root-linode/OSS-scraper/output/"+ git_link.rstrip('/').split('/')[-1].replace('.git','')
+        # The CSVs live in this run's own output folder; this used to hardcode
+        # /mnt/data1/OSPEX/root-linode/OSS-scraper/output, a stale path from a
+        # previous deployment that made the scrape_repository endpoint 500.
+        git_project_cropped_name = os.path.join(output_folder, repo_stem)
 
         git_project_commit_file_name = git_project_cropped_name+ "-commit-file-dev.csv"
         git_project_issue_file_name = git_project_cropped_name + "_issues.csv"
