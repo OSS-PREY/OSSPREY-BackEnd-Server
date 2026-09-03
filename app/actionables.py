@@ -23,8 +23,9 @@ import requests
 from flask import Blueprint, jsonify, request
 from flask_cors import cross_origin
 
+from app import answercache
 from app.pain_points import (
-    CONNECT_TIMEOUT, OLLAMA_URL, RepoWiseUnavailable, _generate, _num,
+    CONNECT_TIMEOUT, OLLAMA_MODEL, OLLAMA_URL, RepoWiseUnavailable, _generate, _num,
     build_evidence, fetch_documents, missing_documents,
 )
 from app.inference_queue import InferenceBusy, gpu_slot
@@ -74,7 +75,6 @@ class IndexMissing(Exception):
     """No embedding index on disk -- the caller should fall back."""
 
 
-_cache = {}         # (project_id, month) -> response payload
 _index = None       # lazily loaded, process-lifetime
 
 
@@ -403,15 +403,6 @@ def actionables():
         except ValueError:
             project_id = None
 
-    # Identity must come from the repository, never from the display name:
-    # an unnamed project defaults to "this project", so two different repos
-    # would have shared a cache entry.
-    identity = project_id or payload.get('github_url')
-    key = (f"{identity}::{digest.get('span', 'window')}::{digest.get('month')}"
-           if identity else None)
-    if key and not payload.get('refresh') and key in _cache:
-        return jsonify(_cache[key]), 200
-
     try:
         index = load_index()
     except IndexMissing as e:
@@ -431,6 +422,20 @@ def actionables():
 
     has_ci = bool(payload.get('has_ci'))
     wanted = wanted_categories(digest, missing, has_ci)
+
+    # Content-addressed on everything that determines the response: the two
+    # retrieval texts (which carry the digest, documents and missing-docs
+    # list), the wanted categories, and both models. This was an unbounded
+    # in-memory dict keyed on (identity, month) -- wiped on every gunicorn
+    # reload and unbounded; the SQLite store fixes both. Keying on the profile
+    # rather than the rerank prompt means a hit also skips the embed call.
+    cache_key = 'act:' + answercache.key_for(
+        OLLAMA_MODEL, EMBED_MODEL, profile, ','.join(str(b) for b in sorted(wanted)))
+    if not payload.get('refresh'):
+        hit = answercache.get(cache_key)
+        if hit is not None:
+            return jsonify({**hit, 'cached': True}), 200
+
     shortlist = retrieve(need_text, domain_text, wanted)
     catalog = index['catalog']
 
@@ -458,7 +463,6 @@ def actionables():
         result['actionables'] = as_payload([i for i, _ in shortlist[:FINAL]], catalog)
         result['reranked'] = False
 
-    if key:
-        _cache[key] = result
+    answercache.put(cache_key, result)
 
     return jsonify(result), 200
