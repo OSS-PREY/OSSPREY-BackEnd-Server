@@ -25,6 +25,7 @@ import requests
 from flask import Blueprint, jsonify, request
 from flask_cors import cross_origin
 
+from app import answercache
 from app.inference_queue import InferenceBusy, gpu_slot
 from app.repowise import RepoWiseUnavailable, project_id_from_github_url
 
@@ -49,6 +50,15 @@ GENERATE_TIMEOUT = 300      # Mistral on CPU takes minutes for a 700-token answe
 MAX_DOC_CHARS = 5000
 MAX_EVIDENCE_CHARS = 6000
 MAX_BULLETS = 8
+
+# The generation context window. gemma4 defaults to a small window and Ollama
+# silently shifts older tokens out when the prompt overflows it, dropping the
+# rules off the front; num_ctx is set explicitly and the prompt is trimmed to
+# fit (see fitted_prompt) instead.
+NUM_CTX = 8192
+NUM_PREDICT = 700
+# Rough token estimate is len // 4; reserve the output and a safety margin.
+PROMPT_TOKEN_BUDGET = NUM_CTX - NUM_PREDICT - 256
 
 # Three angles rather than one: a single embedding query over a long analysis
 # prompt retrieves badly, and these are the document areas a pain point tends to
@@ -410,15 +420,11 @@ def build_prompt(evidence, documents, missing_docs, project_name):
         doc_section += ('\n\nNOT PRESENT in the indexed documents: '
                         + ', '.join(missing_docs))
 
-    return f"""You are an open-source project health analyst reviewing {project_name}.
-
-Identify the project's PAIN POINTS: the things going wrong RIGHT NOW that need
-immediate attention.
-
-A pain point is a PROBLEM, not a solution. Do NOT recommend actions, do NOT
-suggest fixes, do NOT write "should" or "consider" or "the team could". Another
-part of this dashboard already handles recommendations. Your job is only to name
-what is wrong.
+    # Hygiene, not a perf change: the fixed rules block sits at the head of the
+    # prompt so the invariant prefix is identical across projects, and the
+    # project name lives in the evidence block ("PROJECT: ...") rather than in
+    # line 1, so the head of the prompt is byte-for-byte stable.
+    return f"""You are an open-source project health analyst.
 
 RULES
 - Output markdown bullets and nothing else. No preamble, no heading, no closing
@@ -452,6 +458,16 @@ RULES
   for a project with no problems. Where the evidence marks a figure "normal, not
   a concern", it is not a pain point -- do not report it as one.
 
+You are reviewing the project named in the evidence below.
+
+Identify the project's PAIN POINTS: the things going wrong RIGHT NOW that need
+immediate attention.
+
+A pain point is a PROBLEM, not a solution. Do NOT recommend actions, do NOT
+suggest fixes, do NOT write "should" or "consider" or "the team could". Another
+part of this dashboard already handles recommendations. Your job is only to name
+what is wrong.
+
 EVIDENCE FROM THE OSSPREY PIPELINE
 {evidence}
 
@@ -460,12 +476,38 @@ EVIDENCE FROM THE OSSPREY PIPELINE
 Pain points:"""
 
 
+def fitted_prompt(evidence, documents, missing_docs, project_name):
+    """The prompt, trimmed to fit the context window.
+
+    Without this, a prompt longer than num_ctx makes Ollama silently shift the
+    oldest tokens -- the rules at the head -- out of the window. The document
+    excerpts are the least load-bearing part (the metrics evidence carries the
+    findings), so they are what gets cut, with a note so the absence is visible
+    rather than silent.
+    """
+    prompt = build_prompt(evidence, documents, missing_docs, project_name)
+    excess_chars = (len(prompt) // 4 - PROMPT_TOKEN_BUDGET) * 4
+    if excess_chars > 0 and documents:
+        keep = max(len(documents) - excess_chars - 200, 0)
+        logger.info(f'Pain points: prompt over budget, trimming documents to {keep} chars')
+        documents = (documents[:keep]
+                     + '\n\n[Further document excerpts omitted to fit the context window.]'
+                     if keep else '')
+        prompt = build_prompt(evidence, documents, missing_docs, project_name)
+    elif excess_chars > 0:
+        logger.warning(f'Pain points: prompt ~{len(prompt) // 4} tokens exceeds'
+                       f' budget {PROMPT_TOKEN_BUDGET} with no documents to trim')
+
+    return prompt
+
+
 def _generate(prompt):
     payload = {
         'model': OLLAMA_MODEL,
         'prompt': prompt,
         'stream': False,
-        'options': {'temperature': 0.2, 'num_predict': 700, 'top_p': 0.9},
+        'options': {'temperature': 0.2, 'num_predict': NUM_PREDICT, 'top_p': 0.9,
+                    'num_ctx': NUM_CTX},
     }
     if OLLAMA_THINK is not None:
         payload['think'] = OLLAMA_THINK.strip().lower() == 'true'
@@ -543,10 +585,24 @@ def pain_points():
 
     evidence = build_evidence(digest, project_name)
     documents, sources, missing = fetch_documents(project_id)
-    answer = _generate(build_prompt(evidence, documents, missing, project_name))
+    prompt = fitted_prompt(evidence, documents, missing, project_name)
+
+    # Content-addressed: the rendered prompt folds in project name, digest,
+    # documents and the missing-docs list, so any input change is a new key.
+    # The model is part of the key too -- a model swap must not serve answers
+    # written by the old one.
+    cache_key = 'pain:' + answercache.key_for(OLLAMA_MODEL, prompt)
+    if not payload.get('refresh'):
+        hit = answercache.get(cache_key)
+        if hit is not None:
+            return jsonify({**hit, 'cached': True}), 200
+
+    answer = _generate(prompt)
     bullets = to_bullets(answer)
 
     if not bullets:
+        # A failure or an empty answer is never cached -- the next identical
+        # request gets another try.
         logger.info(f'Pain points: no bullets parsed for {project_name}')
         return jsonify({
             'pain_points': [],
@@ -554,8 +610,11 @@ def pain_points():
             'sources': sources,
         }), 200
 
-    return jsonify({
+    result = {
         'pain_points': bullets,
         'sources': sources,
         'documents_used': bool(documents),
-    }), 200
+    }
+    answercache.put(cache_key, result)
+
+    return jsonify(result), 200
