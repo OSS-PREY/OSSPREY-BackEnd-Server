@@ -194,7 +194,10 @@ def login_user():
         return jsonify({'message': 'Email and password are required.'}), 400
 
     user = db.users.find_one({'email': email})
-    if not user or not check_password_hash(user.get('password_hash', ''), password):
+    # Google-sign-in accounts have password_hash None; check_password_hash would
+    # raise AttributeError on it and 500 instead of a clean 401.
+    if not user or not user.get('password_hash') or \
+            not check_password_hash(user['password_hash'], password):
         # Use 'message' key for errors
         return jsonify({'message': 'Invalid email or password.'}), 401
 
