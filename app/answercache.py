@@ -23,6 +23,7 @@ import os
 import sqlite3
 import threading
 import time
+from contextlib import closing
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,9 @@ def key_for(*parts):
 def get(key):
     """The stored payload dict, or None. A read bumps the hit counter."""
     try:
-        with _lock, _connect() as conn:
+        # ``with conn`` commits but never closes; wrap in closing() so the
+        # connection is released rather than left to the garbage collector.
+        with _lock, closing(_connect()) as conn, conn:
             row = conn.execute(
                 'SELECT payload FROM answers WHERE key = ?', (key,)).fetchone()
             if row is None:
@@ -73,7 +76,7 @@ def get(key):
 
 def put(key, payload):
     try:
-        with _lock, _connect() as conn:
+        with _lock, closing(_connect()) as conn, conn:
             conn.execute(
                 'INSERT OR REPLACE INTO answers (key, payload, created, hits)'
                 ' VALUES (?, ?, ?, 0)',
