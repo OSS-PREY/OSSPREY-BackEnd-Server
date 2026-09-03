@@ -403,13 +403,6 @@ def actionables():
         except ValueError:
             project_id = None
 
-    try:
-        index = load_index()
-    except IndexMissing as e:
-        logger.error(f'actionables: {e}')
-
-        return jsonify({'message': 'The actionable index has not been built yet.'}), 503
-
     # The profile is the pain-points evidence plus what the project IS -- the
     # languages and description are what stop a C++ simulator being told to
     # adopt a probabilistic-programming fuzzer.
@@ -435,6 +428,15 @@ def actionables():
         hit = answercache.get(cache_key)
         if hit is not None:
             return jsonify({**hit, 'cached': True}), 200
+
+    # Checked after the cache: a hit is served even if the index has gone
+    # missing, which is when the stored answers matter most.
+    try:
+        index = load_index()
+    except IndexMissing as e:
+        logger.error(f'actionables: {e}')
+
+        return jsonify({'message': 'The actionable index has not been built yet.'}), 503
 
     shortlist = retrieve(need_text, domain_text, wanted)
     catalog = index['catalog']
